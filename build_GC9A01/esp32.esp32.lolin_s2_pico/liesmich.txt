@@ -1,0 +1,29 @@
+
+In der Batch Datei start.bat muss die serielle COM Schnittstelle angepasst und gespeichert werden (derzeit ist COM14 eingestellt).
+Danach ist die start.bat auszuführen und flashed den ESP32 S2.
+Wenn der ESP das erste mal gestartet wird geht er in den Accesspoint Mode.
+Bitte mit dem WLAN Netzwerk SSID clock123 (PASS clock123) verbinden und im Browser die angezeigte IP mit HTTP aufrufen, z.b. http://192.168.4.1
+Achtung, nur HTTP verwendenden, HTTPs funktioniert nicht!
+Mit SAVE werden die geänderten Werte übermittelt und gespeichert.
+RESET startet die Uhr neu.
+
+Um nachträglich die WLan Zugänge zu ändern kann man die Uhr durch 10 Sekunden drücken der Taste an GPIO 16 wieder in den Accesspoint Mode bringen.
+(blauer Bildschirm)
+Wird die Taste beim Einschalten gedrückt können alle Parameter zurückgesetzt werden.
+
+Für die Helligkeitssteuerung ist ein Photowiderstand mit 10-15 K Ohm notwendig, der externe Widerstand hat einen Wert von 10KOhm.
+
+
+
+TFT_SCLK: 7
+TFT_MOSI: 11
+TFT_CS: 12
+TFT_DC: 33
+TFT_RST: 5
+
+BUTTON: 16
+LED_BOARD: 15
+ADC(photoresistor): 2
+ADC_VCC: 1
+ADC_GND: 4
+TFT_Backlight: none

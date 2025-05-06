@@ -1,11 +1,21 @@
+// howl@gmx.de
+// Bahnhofsuhr 05/2025
+// 
+// optimiert für ESP32-S2 Mini  (als Lolin S2 Pico compiliert)
+// Filesystem: LittleFS
+// TFT: GC9A01 / GC9D01 / ILI9341
+// Partition: Default 4MB NO OTA, 2MB, 2MB"
+// TFT_eSPI: 2.5.34
+
+
 
 // Prozessor
 //#define ESP32_D1 // -- funktioniert nicht !!!! SPI & LittleFs ???
 #define ESP32_S2
 
 // TFT
-//#define GC9A01
-#define GC9D01
+#define GC9A01
+//#define GC9D01
 //#define ILI9341 
 
 
@@ -34,7 +44,7 @@ bool showSecondHand = true;
 //               ESP32 PIN    TFT
 //               3.3V         vcc     3v3             red
 //               GND          gnd     ground          black
-//see C : \Users\hwage\Documents\Arduino\libraries\TFT_eSPI\user_setups\Setup304__ESP32S3_GC9D01.h
+//see C:\Users\hwage\Documents\Arduino\libraries\TFT_eSPI\user_setups\Setup304__ESP32S3_GC9D01.h
 
 
 #define LED_BOARD_2 2    // pin2  LED ESP32 D1 Mini
@@ -161,9 +171,13 @@ int highThreshold = 60;
 uint8_t minBrightness = 100;  // 
 uint8_t maxBrightness = 255;  // Obergrenze 
 
-#define ADC_SMOOTHING 10
+#define ADC_SMOOTHING 20
 int adcHistory[ADC_SMOOTHING];
 int adcIndex = 0;
+int currentAdcAvg = 0;  // global definieren
+int currentLightPercent = 0;  // global speichern für Anzeige
+
+
 
 
 File uploadFile;
@@ -473,12 +487,17 @@ void updateBrightness() {
         for (int i = 0; i < ADC_SMOOTHING; i++) avg += adcHistory[i];
         avg /= ADC_SMOOTHING;
 
+        currentAdcAvg = avg;  // speichern
+        
+
+
         int lightPercent = map(avg, 0, 4095, 5, 100);
        
         if (lightPercent < lowThreshold && targetBrightness != minBrightness) targetBrightness = minBrightness;
 
         else if (lightPercent > highThreshold && targetBrightness != maxBrightness) targetBrightness = maxBrightness;
 
+        currentLightPercent = lightPercent;
 
         if (currentBrightness != targetBrightness) {
             if (currentBrightness < targetBrightness) currentBrightness++;
@@ -586,6 +605,27 @@ void setup() {
     delay(500);
 
     preferences.begin("clock", false);
+
+    if (preferences.getBool("firstStart", true)) {
+        Serial.println("[Preferences] First start detected, initializing...");
+        preferences.putBool("firstStart", false);
+        preferences.putBool("bahnhof", true);   
+        preferences.putBool("secondhand", true);   
+#ifdef GC9D01
+        preferences.putUChar("minBrightness", 5); 
+#else
+        preferences.putUChar("minBrightness", 50);
+#endif
+        preferences.putUChar("maxBrightness", 255); 
+        preferences.putUInt("centerColor", TFT_RED);   
+#ifdef GC9A01
+        preferences.putUInt("centerSize", 6);
+#else
+        preferences.putUInt("centerSize", 3);
+#endif
+        preferences.putUChar("storientation", 0);           
+    }
+     
 
     pinMode(BUTTON1, INPUT_PULLDOWN);
 
@@ -858,7 +898,96 @@ void setupNTP() {
 }
 
 void setupWebServer() {
-   
+
+    server.on("/rename_form", HTTP_GET, []() {
+        if (!server.hasArg("file")) {
+            server.send(400, "text/plain", "Missing file parameter.");
+            return;
+        }
+
+        String oldName = server.arg("file");
+        String html = "<!DOCTYPE html><html><head><title>Rename File</title><meta name='viewport' content='width=device-width, initial-scale=1'>";
+        html += "<style>body{font-family:Arial;text-align:center;}input{margin:10px;padding:10px;}</style></head><body>";
+        html += "<h2>Rename File</h2>";
+        html += "<form action='/rename' method='POST'>";
+        html += "<input type='hidden' name='old' value='" + oldName + "'>";
+        html += "<label>New Name:</label><br>";
+        html += "<input name='new' value='" + oldName + "' required><br><br>";
+        html += "<button type='submit'>Rename</button></form>";
+        html += "<br><a href='/files'>Cancel</a></body></html>";
+        server.send(200, "text/html", html);
+        });
+
+    server.on("/rename", HTTP_POST, []() {
+        if (server.hasArg("old") && server.hasArg("new")) {
+            String oldName = server.arg("old");
+            String newName = server.arg("new");
+
+            oldName.replace("..", ""); newName.replace("..", "");
+            if (!oldName.startsWith("/")) oldName = "/" + oldName;
+            if (!newName.startsWith("/")) newName = "/" + newName;
+
+            if (LittleFS.exists(oldName)) {
+                if (LittleFS.rename(oldName, newName)) {
+                    server.sendHeader("Location", "/files", true);
+                    server.send(302, "text/plain", "");
+                }
+                else {
+                    server.send(500, "text/plain", "Rename failed.");
+                }
+            }
+            else {
+                server.send(404, "text/plain", "Original file not found.");
+            }
+        }
+        else {
+            server.send(400, "text/plain", "Missing parameters.");
+        }
+        });
+
+
+
+    server.on("/scalebmp_form", HTTP_GET, []() {
+        if (!server.hasArg("file")) {
+            server.send(400, "text/plain", "Missing file name.");
+            return;
+        }
+        String src = server.arg("file");
+        String html = "<!DOCTYPE html><html><head><title>Scale BMP</title><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:Arial;}input{margin:5px;}</style></head><body>";
+        html += "<h2>Scale and Save BMP</h2>";
+        html += "<form action='/scalebmp_run' method='GET'>";
+        html += "Source: <input name='src' value='/" + src + "' readonly><br>";
+        html += "Target: <input name='dst' value='/scaled_" + src + "'><br>";
+        html += "Width: <input name='w' type='number' value='" + String(CLOCK_WIDTH) +"' required><br>";
+        html += "Height: <input name='h' type='number' value='" + String(CLOCK_HEIGHT) + "' required><br>";
+        html += "<button type='submit'>Scale and Save</button></form>";
+        html += "<a href='/status'>Systemstatus</a><br>";
+        html += "<a href='/files'>File Manager</a><br>";
+        html += "<br><a href='/files'>Back</a></body></html>";
+        server.send(200, "text/html", html);
+        });
+
+    server.on("/scalebmp_run", HTTP_GET, []() {
+        if (!server.hasArg("src") || !server.hasArg("dst") || !server.hasArg("w") || !server.hasArg("h")) {
+            server.send(400, "text/plain", "Missing parameters.");
+            return;
+        }
+
+        String src = server.arg("src");
+        String dst = server.arg("dst");
+        int w = server.arg("w").toInt();
+        int h = server.arg("h").toInt();
+
+        bool ok = scaleAndSaveBmp(src.c_str(), dst.c_str(), w, h);
+        if (ok) {
+            server.send(200, "text/html", "<html><body style='font-family:Arial;'><h3>Scaling successful!</h3><p>Saved as: " + dst + "</p><a href='/files'>Back</a></body></html>");
+        }
+        else {
+            server.send(500, "text/html", "<html><body style='font-family:Arial;'><h3>Failed to scale BMP.</h3><p>Check source file and format.</p><a href='/files'>Back</a></body></html>");
+        }
+        });
+
+
     server.on("/applydisplaysettings", HTTP_POST, []() {
         // Save to Preferences
         bool bahnhof = server.hasArg("enableBahnhof");
@@ -911,6 +1040,19 @@ void setupWebServer() {
         html += "<label>Max Brightness (0 - 255):</label><br><input name='maxBrightness' type='number' min='0' max='255' value='" + String(maxBrightness) + "'><br>";
 
         html += "<button type='submit'>Save</button></form>";
+
+        if (photoresistorFound) {
+            html += "<br>";
+            html += "<hr><strong>Current ADC Value:</strong> " + String(currentAdcAvg) + "<br>";
+            html += "<strong>Current Brightness:</strong> " + String(currentBrightness) + " / 255<br>";
+            html += "<strong>Light (for Threshold):</strong> " + String(currentLightPercent) + " %<br>";
+
+            html += "<br>";
+            html += "<form method='GET' action='/brightness'><button type='submit'>Refresh</button></form>";
+            html += "<br>"; html += "<br>";
+        }
+
+        
         html += "<br><a href='/'>Back</a></body></html>";
         server.send(200, "text/html", html);
         });
@@ -932,6 +1074,17 @@ void setupWebServer() {
         html += "<label>Max Brightness (0 - 255):</label><br><input name='maxBrightness' type='number' min='0' max='255' value='" + String(maxBrightness) + "'><br>";
 
         html += "<button type='submit'>Save</button></form>";
+
+        if (photoresistorFound) {
+            html += "<br>";
+            html += "<hr><strong>Current ADC Value:</strong> " + String(currentAdcAvg) + "<br>";
+            html += "<strong>Current Brightness:</strong> " + String(currentBrightness) + " / 255<br>";
+            html += "<strong>Light (for Threshold):</strong> " + String(currentLightPercent) + " %<br>";
+            html += "<br>";
+            html += "<form method='GET' action='/brightness'><button type='submit'>Refresh</button></form>";
+            html += "<br>"; 
+        }
+        
         html += "<br><a href='/'>Back</a></body></html>";
         server.send(200, "text/html", html);
         });
@@ -976,7 +1129,11 @@ void setupWebServer() {
             String name = file.name();
             html += "<tr><td align=left>" + name + "</td><td align=right>" + String(file.size()) + "</td>";
             html += "<td align=right>" + String(info) + "</td>";
-            html += " <td><a href = '/delete?file=" + name + "' onclick = 'return confirm(\"Delete " + name + "?\")'>Delete</a></td></tr>";
+            html += " <td><a href = '/delete?file=" + name + "' onclick = 'return confirm(\"Delete " + name + "?\")'>Delete</a> ";
+            html += "<a href = '/scalebmp_form?file=" + name + "'>Scale</a> ";
+            html += "<a href='/rename_form?file=" + name + "'>Rename</a> ";
+            html += "</td></tr>";
+
             file = root.openNextFile();
         }
         html += "</table><br><a href='/'>Back</a></body></html>";
@@ -984,12 +1141,14 @@ void setupWebServer() {
         });
 
 
+
+
     server.on("/status", HTTP_GET, []() {
 
         char version[32];
         sprintf(version, "%d-%02d-%02d %02d:%02d%:%02d", BUILD_YEAR, BUILD_MONTH, BUILD_DAY, BUILD_HOUR, BUILD_MIN, BUILD_SEC);
 
-        String html = "<!DOCTYPE html><html><head><title>All Files</title><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:Arial;}table{margin:auto;}th,td{padding:8px;}</style></head><body>";
+        String html = "<!DOCTYPE html><html><head><title>Status</title><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:Arial;}table{margin:auto;}th,td{padding:8px;}</style></head><body>";
 
         size_t total = LittleFS.totalBytes();
         size_t used = LittleFS.usedBytes();
@@ -1049,6 +1208,11 @@ void setupWebServer() {
         html += "<li>Flash Size: " + String(ESP.getFlashChipSize() / 1024) + " KB</li>";
         html += "<li>Free Heap: " + String(ESP.getFreeHeap() / 1024) + " KB</li>";
         html += "<li>Sketch Size: " + String(ESP.getSketchSize() / 1024) + " KB</li><br>";
+
+        html += "<li>PSRam size: " + String(ESP.getPsramSize() /1024) + " kB</li>";
+        html += "<li>PSRam free: " + String(ESP.getFreePsram() / 1024) + " kB</li><br>";
+
+
        
         html += "<li>LittleFS Size: " + String(LittleFS.totalBytes() / 1024) + " KB</li>";
         html += "<li>LittleFS Used: " + String(LittleFS.usedBytes() / 1024) + " KB</li>";   
@@ -1075,7 +1239,15 @@ void setupWebServer() {
         html += "<li>TFT_MOSI: " + String(TFT_MOSI) + "</li>";  
         html += "<li>TFT_CS: " + String(TFT_CS) + "</li>";  
         html += "<li>TFT_DC: " + String(TFT_DC) + "</li>";  
-        html += "<li>TFT_RST: " + String(TFT_RST) + "</li>";
+        html += "<li>TFT_RST: " + String(TFT_RST) + "</li><br>";
+
+        html += "<li>BUTTON: " + String(BUTTON1) + "</li>";           
+        html += "<li>LED_BOARD: " + String(LED_BOARD_2) + "</li><br>";
+
+        html += "<li>ADC_VCC: " + String(ADC_3V) + "</li>";
+        html += "<li>ADC(photoresistor): " + String(ADC_PIN) + "</li>";        
+        html += "<li>ADC_GND: " + String(ADC_GND) + "</li>";           
+
 
 #ifndef TFT_Backlight 
         html += "<li>TFT_Backlight: none</li>";
@@ -1419,19 +1591,22 @@ void setupWebServer() {
         uint32_t centerColor = preferences.getUInt("centerColor", 0x000000);
 
         html += "<h2>Centre point</h2><form action='/setcenter' method='POST'>";
-        html += "<label>Size (Pixel):</label><br><input name='size' type='number' min='1' max='50' value='" + String(centerSize) + "'><br>";
+        html += "<label>Size (Pixel):</label><br><input name='size' type='number' min='0' max='50' value='" + String(centerSize) + "'><br>";
         html += "<label>Color (RGB hex, e.g. FF0000 = Red, 000000 = Black):</label><br><input name='color' value='" + String((centerColor >> 11 & 0x1F) * 255 / 31 << 16 | (centerColor >> 5 & 0x3F) * 255 / 63 << 8 | (centerColor & 0x1F) * 255 / 31, HEX) + "'><br>";
         html += "<button type='submit'>Apply</button></form><hr>";
 
         html += "<h3>Upload New Hand Set</h3>";
-        html += "<small>Requirements: " + String(HAND_WIDTH) + " x " + String(HAND_HEIGHT) + " pixels, 16-bit BMP (RGB565), name must start with <code>hand_</code></small><br><br>";
+        html += "<small>Requirements: " + String(HAND_WIDTH) + " x " + String(HAND_HEIGHT) + " pixels, 16-bit BMP (RGB565), name must start with <code>hand_set + no e.g. hand_set1</code><br>Pivot point:" + String(int(HAND_WIDTH / 2)) + " / " + String(int(HAND_HEIGHT * 0.77)) + "<br><br>";
         html += "<form method='POST' action='/uploadhandset' enctype='multipart/form-data'>";
         html += "Set name: <input name='set' required><br>";
        
         html += "Type: <select name='target'><option value='hour'>Hour</option><option value='minute'>Minute</option><option value='second'>Second</option></select><br>";
         html += "File: <input type='file' name='upload' accept='.bmp' required><br><br>";
         html += "<button type='submit'>Upload to Set</button></form><br>";
-        html += "<a href='/'>Back</a></body></html>";
+        html += "<a href='/'>Back</a><br>";
+        html += "<a href='/status'>Systemstatus</a><br>";
+        html += "<a href='/files'>File Manager</a><br>";
+        html += "</body></html>";
         server.send(200, "text/html", html);
         });
 
@@ -1694,3 +1869,94 @@ String getBmpInfo(const String& filename) {
     return String(abs(width)) + " x " + String(abs(height)) + " / " + String(bpp) + " bpp";
 }
 
+bool scaleAndSaveBmp(const char* sourcePath, const char* targetPath, int outW, int outH) {
+
+    Serial.println("[BMP Scale] Scaling BMP: " + String(sourcePath) + " to " + String(targetPath));
+    File bmp = LittleFS.open(sourcePath, "r");
+    if (!bmp) {        
+        Serial.println("[BMP Scale] Failed to open source file");
+    }
+    uint8_t header[54];
+    if (bmp.read(header, 54) != 54 || header[0] != 'B' || header[1] != 'M') {
+        bmp.close();
+        Serial.println("[BMP Scale] Invalid BMP header");
+        return false;
+    }
+
+    int32_t inW = *(int32_t*)&header[18];
+    int32_t inH = *(int32_t*)&header[22];
+    uint16_t bpp = *(uint16_t*)&header[28];
+    uint32_t offset = *(uint32_t*)&header[10];
+
+    if (bpp != 16 || inW <= 0 || abs(inH) <= 0) {
+        bmp.close();
+        Serial.println("[BMP Scale] Invalid BMP format or dimensions");
+        return false;
+    }
+
+    bool flip = inH > 0;
+    inH = abs(inH);
+    float scaleX = (float)inW / outW;
+    float scaleY = (float)inH / outH;
+
+    int inRowSize = ((inW * 2 + 3) / 4) * 4;
+    uint8_t* rowBuf = (uint8_t*)malloc(inRowSize);
+    if (!rowBuf) {
+        bmp.close();
+        Serial.println("[BMP Scale] Memory allocation failed");
+        return false;
+    }
+
+    uint16_t* outImage = new uint16_t[outW * outH];
+
+    for (int y = 0; y < outH; y++) {
+        int srcY = flip ? (inH - 1 - int(y * scaleY)) : int(y * scaleY);
+        bmp.seek(offset + inRowSize * srcY);
+        bmp.read(rowBuf, inRowSize);
+        uint16_t* row16 = (uint16_t*)rowBuf;
+
+        for (int x = 0; x < outW; x++) {
+            int srcX = int(x * scaleX);
+            outImage[y * outW + x] = row16[srcX];
+        }
+    }
+
+    bmp.close();
+    free(rowBuf);
+
+    // Header schreiben
+    File out = LittleFS.open(targetPath, "w");
+    if (!out) {
+        delete[] outImage;
+        Serial.println("[BMP Scale] Failed to open target file");
+        return false;
+    }
+
+    const int rowSize = ((outW * 2 + 3) / 4) * 4;
+    const int dataSize = rowSize * outH;
+    const int fileSize = 54 + dataSize;
+    uint8_t bmpHeader[54] = { 0 };
+
+    bmpHeader[0] = 'B'; bmpHeader[1] = 'M';
+    *(uint32_t*)&bmpHeader[2] = fileSize;
+    *(uint32_t*)&bmpHeader[10] = 54;
+    *(uint32_t*)&bmpHeader[14] = 40;
+    *(int32_t*)&bmpHeader[18] = outW;
+    *(int32_t*)&bmpHeader[22] = -outH; // Top-down BMP
+    *(uint16_t*)&bmpHeader[26] = 1;
+    *(uint16_t*)&bmpHeader[28] = 16;
+    *(uint32_t*)&bmpHeader[34] = dataSize;
+
+    out.write(bmpHeader, 54);
+
+    for (int y = 0; y < outH; y++) {
+        uint8_t rowOut[rowSize];
+        memset(rowOut, 0, rowSize);
+        memcpy(rowOut, &outImage[y * outW], outW * 2);
+        out.write(rowOut, rowSize);
+    }
+
+    out.close();
+    delete[] outImage;
+    return true;
+}
