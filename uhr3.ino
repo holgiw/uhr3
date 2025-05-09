@@ -1,6 +1,8 @@
 // howl@gmx.de
 // Bahnhofsuhr 05/2025
 // 
+// https://github.com/holgiw/uhr3
+// 
 // optimiert für ESP32-S2 Mini  (als Lolin S2 Pico compiliert)
 // Filesystem: LittleFS
 // TFT: GC9A01 / GC9D01 / ILI9341
@@ -14,8 +16,8 @@
 #define ESP32_S2
 
 // TFT
-#define GC9A01
-//#define GC9D01
+//#define GC9A01
+#define GC9D01
 //#define ILI9341 
 
 
@@ -47,8 +49,8 @@ bool showSecondHand = true;
 //see C:\Users\hwage\Documents\Arduino\libraries\TFT_eSPI\user_setups\Setup304__ESP32S3_GC9D01.h
 
 
-#define LED_BOARD_2 2    // pin2  LED ESP32 D1 Mini
-#define LED_BOARD_22 22  // pin22 LED LOLIN32
+#define LED_BOARD 2    // pin2  LED ESP32 D1 Mini
+#define LED_BOARD 22   // pin22 LED LOLIN32
 
 #define ADC_3V 33
 #define ADC_PIN 34
@@ -73,7 +75,7 @@ bool showSecondHand = true;
 
 
 
-#define LED_BOARD_2 15 // BUILTIN LED
+#define LED_BOARD 15 // BUILTIN LED
 
 #define ADC_3V 1
 #define ADC_PIN 2
@@ -155,6 +157,7 @@ uint8_t bahnhofTick = 0;
 uint32_t bahnhofLastMillis = 0;
 bool bahnhofWaiting = false;
 
+
 uint16_t rowBuffer[CLOCK_WIDTH];
 
 uint16_t adc_min = 0;
@@ -177,7 +180,7 @@ int adcIndex = 0;
 int currentAdcAvg = 0;  // global definieren
 int currentLightPercent = 0;  // global speichern für Anzeige
 
-
+//bool smoothMinute = false;
 
 
 File uploadFile;
@@ -186,7 +189,7 @@ bool uploadSuccess = false;
 
 uint16_t setPixelBrightness(uint16_t pixel) {
 
-#ifdef GC9D01
+#ifdef TFT_Backlight
     return pixel;
 #endif
 
@@ -264,7 +267,7 @@ void loadHandSprites() {
         };
 
         for (auto& h : hands) {
-            String path = "/hand_" + set + "_" + h.label + ".bmp";
+            String path = "/hand_set" + set + "_" + h.label + ".bmp";
 #ifdef DEBUG
             Serial.println("[HANDS] Looking for: " + path);
 #endif
@@ -400,7 +403,14 @@ void updateClock() {
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo)) return;
 
+  // preferences.putBool("smoothMinute", true);
+
     bool bahnhofMode = preferences.getBool("bahnhof", true);
+    bool smoothMinute = preferences.getBool("smoothMinute", false);
+
+   // smoothMinute = true;
+   // Serial.println("[CLOCK] smoothMinute: " + smoothMinute);
+
     int actualSec = timeinfo.tm_sec;
     static int lastSec = -1;
 
@@ -446,9 +456,23 @@ void updateClock() {
         secAngle = actualSec * 6.0f;
     }
 
-    float smoothMin = bahnhofMode ? timeinfo.tm_min : (timeinfo.tm_min + timeinfo.tm_sec / 60.0f);
+    // Minutenzeiger:
+     
+    float smoothMin;
+    if (smoothMinute) {       
+        smoothMin = timeinfo.tm_min + (timeinfo.tm_sec / 60.0f);
+    }
+    else {
+        smoothMin = timeinfo.tm_min;
+    }
+
     float minAngle = smoothMin * 6.0f;
+
+
+    // Stundenzeiger
     float hourAngle = (timeinfo.tm_hour % 12 + smoothMin / 60.0f) * 30.0f;
+
+    
 
    // backgroundSprite.fillSprite(TFT_BLACK);
     loadClockFace();
@@ -614,9 +638,18 @@ void setup() {
 #ifdef GC9D01
         preferences.putUChar("minBrightness", 5); 
 #else
-        preferences.putUChar("minBrightness", 50);
+        preferences.putUChar("", 50);
 #endif
         preferences.putUChar("maxBrightness", 255); 
+        
+        preferences.putInt("lowThreshold", 20);
+        preferences.putInt("highThreshold", 50);
+
+
+
+
+
+
         preferences.putUInt("centerColor", TFT_RED);   
 #ifdef GC9A01
         preferences.putUInt("centerSize", 6);
@@ -671,7 +704,10 @@ void setup() {
     minBrightness = preferences.getUChar("minBrightness", 100);
     maxBrightness = preferences.getUChar("maxBrightness", 255);
 
-    pinMode(LED_BOARD_2, OUTPUT); digitalWrite(LED_BOARD_2, HIGH);
+  //  smoothMinute = preferences.getBool("smoothMinute", false);
+  //  Serial.println("[SETUP] smoothMinute: " + String(smoothMinute));    
+
+    pinMode(LED_BOARD, OUTPUT); digitalWrite(LED_BOARD, HIGH);
 
     String hostname = "Clock-" + String((uint32_t)ESP.getEfuseMac(), HEX);
     WiFi.setHostname(hostname.c_str());
@@ -749,7 +785,7 @@ void setup() {
     setupWebServer();
     server.begin();
 
-    digitalWrite(LED_BOARD_2, LOW);
+    digitalWrite(LED_BOARD, LOW);
 }
 
 void startAP() {
@@ -992,8 +1028,15 @@ void setupWebServer() {
         // Save to Preferences
         bool bahnhof = server.hasArg("enableBahnhof");
         bool second = server.hasArg("showSecond");
+        
+        bool smoothMinute = server.hasArg("smoothMinute");
+        Serial.println("[SMOOTH] Smooth minute hand: " + smoothMinute);
+
+
         preferences.putBool("bahnhof", bahnhof);
         preferences.putBool("secondhand", second);
+        preferences.putBool("smoothMinute", smoothMinute);
+
 
         if (server.hasArg("rotation")) {
             uint8_t rot = server.arg("rotation").toInt();
@@ -1031,8 +1074,8 @@ void setupWebServer() {
         if (photoresistorFound) {
             html += "<label><input type='checkbox' name='use_adc' value='1' " + String(use_adc ? "checked" : "") + "> Enable Auto Brightness</label><br>";
 
-            html += "<label>Low Threshold (0 - 100):</label><br><input name='lowThreshold' type='number' min='0' max='100' value='" + String(lowThreshold) + "'><br>";
-            html += "<label>High Threshold (0 - 100):</label><br><input name='highThreshold' type='number' min='0' max='100' value='" + String(highThreshold) + "'><br>";
+            html += "<label>Low Threshold (0 - 100%):</label><br><input name='lowThreshold' type='number' min='0' max='100' value='" + String(lowThreshold) + "'><br>";
+            html += "<label>High Threshold (0 - 100%):</label><br><input name='highThreshold' type='number' min='0' max='100' value='" + String(highThreshold) + "'><br>";
         }
 
         html += "<label>Min Brightness (0 - 255):</label><br><input name='minBrightness' type='number' min='0' max='255' value='" + String(minBrightness) + "'><br>";
@@ -1178,15 +1221,16 @@ void setupWebServer() {
         html += "<li>Compiled on: <strong>" + (String)version + "</strong></li><br>";
 
 #ifdef GC9A01
-        html += "<li>TFT driver: GC9A01</li>";
+        html += "<li>TFT Driver: GC9A01</li>";
 #elif defined(GC9D01)
-        html += "<li>TFT driver: GC9D01</li>";
+        html += "<li>TFT Driver: GC9D01</li>";
 #elif defined(ILI9341)
-        html += "<li>TFT driver: ILI9341</li>";
+        html += "<li>TFT Driver: ILI9341</li>";
 #else 
-        html += "<li>TFT driver: unknown</li>";
+        html += "<li>TFT Driver: unknown</li>";
 #endif
-
+        html += "<li>TFT Size: " + String(TFT_WIDTH) + " x " + String(TFT_HEIGHT) + "</li>";
+       
 
         html += "<br>";
         html += "<li>ChipModel: " + String(ESP.getChipModel()) + "</li>";
@@ -1242,7 +1286,7 @@ void setupWebServer() {
         html += "<li>TFT_RST: " + String(TFT_RST) + "</li><br>";
 
         html += "<li>BUTTON: " + String(BUTTON1) + "</li>";           
-        html += "<li>LED_BOARD: " + String(LED_BOARD_2) + "</li><br>";
+        html += "<li>LED_BOARD: " + String(LED_BOARD) + "</li><br>";
 
         html += "<li>ADC_VCC: " + String(ADC_3V) + "</li>";
         html += "<li>ADC(photoresistor): " + String(ADC_PIN) + "</li>";        
@@ -1408,6 +1452,11 @@ void setupWebServer() {
         html += preferences.getBool("secondhand", true) ? "checked" : "";
         html += "> Show Seconds</td>";
 
+        html += "<td><input type='checkbox' name='smoothMinute' value='1' ";
+        html += preferences.getBool("smoothMinute", true) ? "checked" : "";
+        html += "> Smooth Minute Hand</td>";
+
+
 #ifndef GC9D01
         uint8_t rot = preferences.getUChar("storientation", 0);
         html += "<td>Rotation: <select name='rotation'>";
@@ -1551,7 +1600,7 @@ void setupWebServer() {
             String name = file.name();
             Serial.println(name);
             if (!file.isDirectory() && name.startsWith("hand_set") && name.endsWith(".bmp")) {
-                int start = 5;
+                int start = 8;
                 int end = name.indexOf('_', start);
                 if (end > start) {
                     String set = name.substring(start, end);
@@ -1571,13 +1620,13 @@ void setupWebServer() {
         html += "<img src='data:image/bmp;base64," + encodeBmpToBase64(handHour, HAND_WIDTH, HAND_HEIGHT) + "'> ";
         html += "<img src='data:image/bmp;base64," + encodeBmpToBase64(handMinute, HAND_WIDTH, HAND_HEIGHT) + "'> ";
         html += "<img src='data:image/bmp;base64," + encodeBmpToBase64(handSecond, HAND_WIDTH, HAND_HEIGHT) + "'>";
-        html += "</td><td><a href='/sethandset?set='>Set</a></td></tr>";
+        html += "</td><td><a href='/sethandset?set=default'</a>Set</td></tr>";
 
         for (const String& set : foundSets) {
             html += "<tr><td>" + set + (set == activeSet ? " (active)" : "") + "</td><td>";
-            String hourPath = "/hand_" + set + "_hour.bmp";
-            String minutePath = "/hand_" + set + "_minute.bmp";
-            String secondPath = "/hand_" + set + "_second.bmp";
+            String hourPath = "/hand_set" + set + "_hour.bmp";
+            String minutePath = "/hand_set" + set + "_minute.bmp";
+            String secondPath = "/hand_set" + set + "_second.bmp";
             html += LittleFS.exists(hourPath) ? "<img src='/file?name=" + hourPath + "'> " : "<img src='data:image/bmp;base64," + encodeBmpToBase64(handHour, HAND_WIDTH, HAND_HEIGHT) + "'> ";
             html += LittleFS.exists(minutePath) ? "<img src='/file?name=" + minutePath + "'> " : "<img src='data:image/bmp;base64," + encodeBmpToBase64(handMinute, HAND_WIDTH, HAND_HEIGHT) + "'> ";
             html += LittleFS.exists(secondPath) ? "<img src='/file?name=" + secondPath + "'>" : "<img src='data:image/bmp;base64," + encodeBmpToBase64(handSecond, HAND_WIDTH, HAND_HEIGHT) + "'>";
@@ -1598,9 +1647,7 @@ void setupWebServer() {
         html += "<h3>Upload New Hand Set</h3>";
         html += "<small>Requirements: " + String(HAND_WIDTH) + " x " + String(HAND_HEIGHT) + " pixels, 16-bit BMP (RGB565), name must start with <code>hand_set + no e.g. hand_set1</code><br>Pivot point:" + String(int(HAND_WIDTH / 2)) + " / " + String(int(HAND_HEIGHT * 0.77)) + "<br><br>";
         html += "<form method='POST' action='/uploadhandset' enctype='multipart/form-data'>";
-        html += "Set name: <input name='set' required><br>";
-       
-        html += "Type: <select name='target'><option value='hour'>Hour</option><option value='minute'>Minute</option><option value='second'>Second</option></select><br>";
+        
         html += "File: <input type='file' name='upload' accept='.bmp' required><br><br>";
         html += "<button type='submit'>Upload to Set</button></form><br>";
         html += "<a href='/'>Back</a><br>";
@@ -1632,9 +1679,9 @@ void setupWebServer() {
 
 
     server.on("/uploadhandset", HTTP_POST, []() {
-        if (uploadSuccess && server.hasArg("set") && server.hasArg("target")) {
+        if (uploadSuccess) {
             // Sicherheitsprüfung auf Dateinamenmuster
-            if (!uploadFilePath.endsWith(".bmp") || !uploadFilePath.startsWith("/hand_")) {
+            if (!uploadFilePath.endsWith(".bmp") || !uploadFilePath.startsWith("/hand_set")) {
                 String errorHtml = "<!DOCTYPE html><html><head><title>Upload Failed</title><meta name='viewport' content='width=device-width, initial-scale=1'></head><body style='font-family:Arial;text-align:center;'>";
                 errorHtml += "<h2>Upload failed</h2>";
                 errorHtml += "<p>Only .bmp files starting with <code>hand_</code> are accepted for handset upload.</p>";
@@ -1643,12 +1690,13 @@ void setupWebServer() {
                 return;
             }
             String set = server.arg("set");
-            String target = server.arg("target");
+          //  String target = server.arg("target");
             String dir = "/";
             if (!LittleFS.exists(dir)) LittleFS.mkdir(dir);
-            String finalPath = "/hand_set" + set + "_" + target + ".bmp";
-            LittleFS.rename(uploadFilePath, finalPath);
-            Serial.println("[UPLOAD] Hand uploaded to: " + finalPath);
+          //  String finalPath = "/hand_set" + set + "_" + target + ".bmp";
+          //  LittleFS.rename(uploadFilePath, finalPath);
+          //  Serial.println("[UPLOAD] Hand uploaded to: " + finalPath);
+            Serial.println("[UPLOAD] Hand uploaded to: " + uploadFilePath);
             server.sendHeader("Location", "/handsets", true);
             server.send(302, "text/plain", "");
         }
@@ -1661,6 +1709,7 @@ void setupWebServer() {
         if (server.hasArg("set")) {
             String chosen = server.arg("set");
             preferences.putString("handset", chosen);
+            Serial.println("[HANDSET] Set to: " + chosen);
             loadClockFace();
             loadHandSprites();
             updateClock();
@@ -1677,7 +1726,7 @@ void setupWebServer() {
             String set = server.arg("set");
             String targets[] = { "hour", "minute", "second" };
             for (const String& target : targets) {
-                String path = "/hand_" + set + "_" + target + ".bmp";
+                String path = "/hand_set" + set + "_" + target + ".bmp";
                 Serial.println("[DELETE] Looking for: " + path);
                 if (LittleFS.exists(path)) {
                     LittleFS.remove(path);
@@ -1725,8 +1774,8 @@ void handleFileUpload() {
 
         // Nur bestimmte Dateinamenmuster zulassen
         if (!uploadFilePath.endsWith(".bmp") ||
-            !(uploadFilePath.startsWith("/face_") || uploadFilePath.startsWith("/hand_"))) {
-            Serial.println("[UPLOAD] Invalid filename: must start with 'face_' or 'hand_' and end with '.bmp'");
+            !(uploadFilePath.startsWith("/face_") || uploadFilePath.startsWith("/hand_set"))) {
+            Serial.println("[UPLOAD] Invalid filename: must start with 'face_' or 'hand_set' and end with '.bmp'");
             uploadSuccess = false;
             return;
         }
@@ -1755,7 +1804,7 @@ void handleFileUpload() {
                     if (uploadFilePath.startsWith("/face_")) {
                         Serial.println("[UPLOAD] Detected Clock Face upload");
                     }
-                    else if (uploadFilePath.startsWith("/hand_")) {
+                    else if (uploadFilePath.startsWith("/hand_set")) {
                         Serial.println("[UPLOAD] Detected Clock Hand upload");
                     }                    
                 }
