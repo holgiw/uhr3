@@ -16,8 +16,8 @@
 #define ESP32_S2
 
 // TFT
-#define GC9A01
-//#define GC9D01
+//#define GC9A01
+#define GC9D01
 //#define ILI9341 
 
 
