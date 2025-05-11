@@ -51,7 +51,7 @@
 ---
 9. Hardware Integration
 •	Compatible only with ESP32-S2.
-•	Includes built-in LED control and photoresistor for brightness measurement.
+•	Photoresistor for brightness measurement.
 ---
 10. Advanced Features
 •	Uptime Display: Shows the clock's runtime since the last restart.
