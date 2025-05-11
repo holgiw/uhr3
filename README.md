@@ -50,7 +50,7 @@
 •	Permanent summer or winter time.
 ---
 9. Hardware Integration
-•	Compatible with ESP32-S2 and ESP32-D1 Mini.
+•	Compatible only with ESP32-S2.
 •	Includes built-in LED control and photoresistor for brightness measurement.
 ---
 10. Advanced Features
