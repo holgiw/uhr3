@@ -93,7 +93,7 @@ bool showSecondHand = true;
 #endif
 
 #ifdef GC9A01
-#include "clock_default_240.h"
+#include "graphic/240/clock_default.h"
 
 #define TFT_WIDTH 240
 #define TFT_HEIGHT 240
@@ -108,7 +108,7 @@ bool showSecondHand = true;
 #endif
 
 #ifdef GC9D01
-#include "clock_default_160.h"
+#include "graphic/160/clock_default.h"
 
 #define TFT_WIDTH 160
 #define TFT_HEIGHT 160
@@ -123,7 +123,7 @@ bool showSecondHand = true;
 #endif
 
 #ifdef ILI9341
-#include "clock_default_240.h"
+#include "graphic/240/clock_default.h"
 
 #define TFT_WIDTH 160
 #define TFT_HEIGHT 160
