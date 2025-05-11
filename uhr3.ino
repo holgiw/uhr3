@@ -16,8 +16,8 @@
 #define ESP32_S2
 
 // TFT
-//#define GC9A01
-#define GC9D01
+#define GC9A01
+//#define GC9D01
 //#define ILI9341 
 
 
@@ -191,24 +191,31 @@ uint16_t setPixelBrightness(uint16_t pixel) {
 
 #ifdef TFT_Backlight
     return pixel;
-#endif
+#else
 
-    if (currentBrightness == 255 || pixel == TRANSPARENT_COLOR || pixel == 0x0000) {
+    // Wenn die Helligkeit maximal ist oder der Pixel transparent/schwarz ist, direkt zurückgeben
+    if (pixel == TRANSPARENT_COLOR || pixel == 0x0000 || currentBrightness == 255) {
         return pixel;
     }
 
-    // Farbe anpassen
-    uint8_t r = (pixel & 0xF800) >> 11;
-    uint8_t g = (pixel & 0x07E0) >> 5;
-    uint8_t b = (pixel & 0x001F);
+    // Multiplikator einmal berechnen (statt 3x Division)
+    uint32_t brightnessFactor = (uint32_t)currentBrightness;
 
-    r = r * currentBrightness / 255;
-    g = g * currentBrightness / 255;
-    b = b * currentBrightness / 255;
+    // Farben extrahieren
+    uint32_t r = (pixel & 0xF800);
+    uint32_t g = (pixel & 0x07E0);
+    uint32_t b = (pixel & 0x001F);
 
-    return (r << 11) | (g << 5) | b;
+    // Multiplikation mit Brightness (optimiert, kein Shift nötig)
+    r = ((r * brightnessFactor) >> 8) & 0xF800;
+    g = ((g * brightnessFactor) >> 8) & 0x07E0;
+    b = ((b * brightnessFactor) >> 8) & 0x001F;
 
+    // Farbwerte zusammenfügen
+    return r | g | b;
+#endif
 }
+
 
 void loadClockFace() {
     if (LittleFS.exists(selectedBackground)) {
@@ -546,7 +553,9 @@ void updateBrightness() {
 }
 
 float easeInOutSine(float t) {
-    return -(cos(PI * t) - 1.0f) / 2.0f;
+    // Intensität steuert die Kurve: 1.0 = Standard, >1.0 = steiler, <1.0 = flacher
+    float intensity = 0.5f;
+    return -(cos(PI * pow(t, intensity)) - 1.0f) / 2.0f;
 }
 
 String encodeBmpToBase64(const uint16_t* data, int width, int height) {
@@ -647,10 +656,6 @@ void setup() {
         preferences.putInt("highThreshold", 50);
 
 
-
-
-
-
         preferences.putUInt("centerColor", TFT_RED);   
 #ifdef GC9A01
         preferences.putUInt("centerSize", 6);
@@ -660,6 +665,10 @@ void setup() {
         preferences.putUChar("storientation", 0);           
     }
      
+    // Standard-Zeitzone, falls nichts gespeichert ist
+    String timezone = preferences.getString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3");
+    configTzTime(timezone.c_str(), "pool.ntp.org", "time.nist.gov");
+    Serial.println("Zeitzone eingestellt auf: " + timezone);
 
     pinMode(BUTTON1, INPUT_PULLDOWN);
 
@@ -934,7 +943,68 @@ void setupNTP() {
     }
 }
 
+void setTimezone(String tz) {
+    preferences.putString("timezone", tz);
+    configTzTime(tz.c_str(), "pool.ntp.org", "time.nist.gov");
+    Serial.println("Set New Timezone: " + tz);
+}
+
+
 void setupWebServer() {
+
+    // Webserver konfigurieren
+    server.on("/set_timezone", HTTP_POST, []() {
+        if (server.hasArg("timezone")) {
+            String tz = server.arg("timezone");
+            preferences.putString("timezone", tz);
+            configTzTime(tz.c_str(), "pool.ntp.org", "time.nist.gov");
+            Serial.println("Timezone set to: " + tz);
+
+            server.send(200, "text/html",
+                "<!DOCTYPE html><html><head>"
+                "<meta http-equiv='refresh' content='3; url=/' />"
+                "<title>Timezone Updated</title></head>"
+                "<body><h2>Timezone updated to: " + tz + "</h2>"
+                "<p>Returning to the main page in 3 seconds...</p></body></html>"
+            );
+        }
+        else {
+            server.send(400, "text/plain", "Timezone parameter missing");
+        }
+        });
+
+
+    server.on("/timezone_form", HTTP_GET, []() {
+        String html = "<!DOCTYPE html><html><head><title>Set Timezone</title></head><body>";
+        html += "<h2>Set Timezone (DST String)</h2>";
+        html += "<form method='POST' action='/set_timezone'>";
+        html += "<input type='text' name='timezone' placeholder='CET-1CEST,M3.5.0,M10.5.0/3' style='width: 300px;' required><br>";
+        
+        html += "<ul>";
+        html += "<li><strong>Germany (DE)</strong> - With Daylight Saving Time (DST) automatically: <code>CET-1CEST,M3.5.0,M10.5.0/3</code></li>";
+        html += "<li>Germany (DE) - Permanent Summer Time: <code>CEST-2</code></li>";
+        html += "<li>Germany (DE) - Permanent Winter Time: <code>CET-1</code></li>";
+        html += "<li><strong>United Kingdom (UK)</strong> - With Daylight Saving Time (DST) automatically: <code>GMT0BST,M3.5.0/1,M10.5.0</code></li>";
+        html += "<li>United Kingdom (UK) - Permanent Summer Time: <code>BST-1</code></li>";
+        html += "<li>United Kingdom (UK) - Permanent Winter Time: <code>GMT0</code></li>";
+        html += "<li><strong>USA (Eastern Time, New York)</strong> - With Daylight Saving Time (DST) automatically: <code>EST5EDT,M3.2.0,M11.1.0</code></li>";
+        html += "<li>USA (Eastern Time, New York) - Permanent Summer Time: <code>EDT-4</code></li>";
+        html += "<li>USA (Eastern Time, New York) - Permanent Winter Time: <code>EST-5</code></li>";
+        html += "<li><strong>Japan (Tokyo, JST)</strong> - No Daylight Saving Time (Standard Time): <code>JST-9</code></li>";
+        html += "<li><strong>Australia (Sydney, AEDT)</strong> - With Daylight Saving Time (DST) automatically: <code>AEST-10AEDT,M10.1.0,M4.1.0/3</code></li>";
+        html += "<li>Australia (Sydney, AEDT) - Permanent Summer Time: <code>AEDT-11</code></li>";
+        html += "<li>Australia (Sydney, AEDT) - Permanent Winter Time: <code>AEST-10</code></li>";
+        html += "<li><strong>India (New Delhi, IST)</strong> - No Daylight Saving Time (Standard Time): <code>IST-5:30</code></li>";
+        html += "<li><strong>Brazil (Brasilia, BRT)</strong> - No Daylight Saving Time (Standard Time): <code>BRT-3</code></li>";
+        html += "<li><strong>China (Beijing, CST)</strong> - No Daylight Saving Time (Standard Time): <code>CST-8</code></li>";
+       html += "<li><strong>South Africa (Johannesburg, SAST)</strong> - No Daylight Saving Time (Standard Time): <code>SAST-2</code></li>";
+        html += "</ul>";
+
+
+        html += "<button type='submit'>Save Timezone</button>";
+        html += "</form></body></html>";
+        server.send(200, "text/html", html);
+        });
 
     server.on("/rename_form", HTTP_GET, []() {
         if (!server.hasArg("file")) {
@@ -1203,13 +1273,7 @@ void setupWebServer() {
         String tzLabel = preferences.getString("timezone", "DE");
         String tzDesc;
 
-        if (tzLabel == "DE") tzDesc = "CET-1CEST (Auto DST)";
-        else if (tzLabel == "DE_S") tzDesc = "CEST-2 (Permanent Summer Time)";
-        else if (tzLabel == "DE_W") tzDesc = "CET-1 (Permanent Winter Time)";
-        else if (tzLabel == "UK") tzDesc = "GMT0BST (Auto DST)";
-        else if (tzLabel == "UK_S") tzDesc = "BST-1 (Permanent Summer Time)";
-        else if (tzLabel == "UK_W") tzDesc = "GMT0 (Permanent Winter Time)";
-        else tzDesc = "(Unknown)";
+        tzDesc = tzLabel;
          
         struct tm timeinfo;
         if (getLocalTime(&timeinfo)) {
@@ -1428,20 +1492,12 @@ void setupWebServer() {
 
         html += "<form action='/applydisplaysettings' method='POST'>";
 
-        String timezone = preferences.getString("timezone", "DE");
 
-        html += "<br>";
-        html += "<strong>Timezone</strong><br>";
-        html += "<select name='timezone'>";
-        html += String("<option value='DE'") + (timezone == "DE" ? " selected" : "") + ">Germany (auto DST)</option>";
-        html += String("<option value='DE_S'") + (timezone == "DE_S" ? " selected" : "") + ">Germany (always summer)</option>";
-        html += String("<option value='DE_W'") + (timezone == "DE_W" ? " selected" : "") + ">Germany (always winter)</option>";
-        html += String("<option value='UK'") + (timezone == "UK" ? " selected" : "") + ">UK (auto DST)</option>";
-        html += String("<option value='UK_S'") + (timezone == "UK_S" ? " selected" : "") + ">UK (always summer)</option>";
-        html += String("<option value='UK_W'") + (timezone == "UK_W" ? " selected" : "") + ">UK (always winter)</option>";
-        html += "</select><br>";
-                     
+        //html += "<a href='/timezone_form'><button>Set Timezone</button></a><br><br>";
 
+        html += "<li><a href='/timezone_form'>Set Timezone</a></li>";
+
+        
         
         html += "<table style='margin:auto;text-align:left;'><tr>";
 
