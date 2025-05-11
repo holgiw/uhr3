@@ -1,0 +1,1 @@
+esptool.exe --chip esp32 --port "COM26" --baud 921600  --before default_reset --after hard_reset write_flash  -z --flash_mode keep --flash_freq keep --flash_size keep 0x1000 DigitalUhr.ino.bootloader.bin 0x8000 DigitalUhr.ino.partitions.bin 0xe000 boot_app0.bin 0x10000 DigitalUhr.ino.bin
