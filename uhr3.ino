@@ -987,17 +987,30 @@ void setupWebServer() {
         html += "<li><strong>United Kingdom (UK)</strong> - With Daylight Saving Time (DST) automatically: <code>GMT0BST,M3.5.0/1,M10.5.0</code></li>";
         html += "<li>United Kingdom (UK) - Permanent Summer Time: <code>BST-1</code></li>";
         html += "<li>United Kingdom (UK) - Permanent Winter Time: <code>GMT0</code></li>";
-        html += "<li><strong>USA (Eastern Time, New York)</strong> - With Daylight Saving Time (DST) automatically: <code>EST5EDT,M3.2.0,M11.1.0</code></li>";
+        html += "<li><strong>USA (Pacific Time, Los Angeles)</strong> - DST Auto: <code>PST8PDT,M3.2.0,M11.1.0</code></li>";
+        html += "<li>USA (Central Time, Chicago) - DST Auto: <code>CST6CDT,M3.2.0,M11.1.0</code></li>";
+        html += "<li>USA (Mountain Time, Denver) - DST Auto: <code>MST7MDT,M3.2.0,M11.1.0</code></li>";
+        html += "<li>USA (Eastern Time, New York) - DST Auto: <code>EST5EDT,M3.2.0,M11.1.0</code></li>";
         html += "<li>USA (Eastern Time, New York) - Permanent Summer Time: <code>EDT-4</code></li>";
         html += "<li>USA (Eastern Time, New York) - Permanent Winter Time: <code>EST-5</code></li>";
-        html += "<li><strong>Japan (Tokyo, JST)</strong> - No Daylight Saving Time (Standard Time): <code>JST-9</code></li>";
-        html += "<li><strong>Australia (Sydney, AEDT)</strong> - With Daylight Saving Time (DST) automatically: <code>AEST-10AEDT,M10.1.0,M4.1.0/3</code></li>";
+        html += "<li><strong>Japan (Tokyo, JST)</strong> - No Daylight Saving Time: <code>JST-9</code></li>";
+        html += "<li><strong>Australia (Sydney, AEDT)</strong> - DST Auto: <code>AEST-10AEDT,M10.1.0,M4.1.0/3</code></li>";
         html += "<li>Australia (Sydney, AEDT) - Permanent Summer Time: <code>AEDT-11</code></li>";
         html += "<li>Australia (Sydney, AEDT) - Permanent Winter Time: <code>AEST-10</code></li>";
-        html += "<li><strong>India (New Delhi, IST)</strong> - No Daylight Saving Time (Standard Time): <code>IST-5:30</code></li>";
-        html += "<li><strong>Brazil (Brasilia, BRT)</strong> - No Daylight Saving Time (Standard Time): <code>BRT-3</code></li>";
-        html += "<li><strong>China (Beijing, CST)</strong> - No Daylight Saving Time (Standard Time): <code>CST-8</code></li>";
-       html += "<li><strong>South Africa (Johannesburg, SAST)</strong> - No Daylight Saving Time (Standard Time): <code>SAST-2</code></li>";
+        html += "<li><strong>India (New Delhi, IST)</strong> - No Daylight Saving Time: <code>IST-5:30</code></li>";
+        html += "<li><strong>Brazil (Brasília, BRT)</strong> - No Daylight Saving Time: <code>BRT-3</code></li>";
+        html += "<li><strong>China (Shanghai, CST)</strong> - No Daylight Saving Time: <code>CST-8</code></li>";
+        html += "<li><strong>Singapore (SGT)</strong> - No Daylight Saving Time: <code>SGT-8</code></li>";
+        html += "<li><strong>Indonesia (Jakarta, WIB)</strong> - No Daylight Saving Time: <code>WIB-7</code></li>";
+        html += "<li><strong>South Korea (Seoul, KST)</strong> - No Daylight Saving Time: <code>KST-9</code></li>";
+        html += "<li><strong>Argentina (Buenos Aires, ART)</strong> - No Daylight Saving Time: <code>ART-3</code></li>";
+        html += "<li><strong>Chile (Santiago, CLT)</strong> - DST Auto: <code>CLT4CLST,M9.1.6/24,M4.1.6/24</code></li>";
+        html += "<li><strong>New Zealand (Wellington, NZST)</strong> - DST Auto: <code>NZST-12NZDT,M9.5.0,M4.1.0/3</code></li>";
+        html += "<li><strong>Fiji (Suva, FJT)</strong> - No Daylight Saving Time: <code>FJT-12</code></li>";
+        html += "<li><strong>Nigeria (Lagos, WAT)</strong> - No Daylight Saving Time: <code>WAT-1</code></li>";
+        html += "<li><strong>South Africa (Johannesburg, SAST)</strong> - No Daylight Saving Time: <code>SAST-2</code></li>";
+        html += "<li><strong>Egypt (Cairo, EET)</strong> - No Daylight Saving Time: <code>EET-2</code></li>";
+
         html += "</ul>";
 
 
