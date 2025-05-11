@@ -16,8 +16,8 @@
 #define ESP32_S2
 
 // TFT
-//#define GC9A01
-#define GC9D01
+#define GC9A01
+//#define GC9D01
 //#define ILI9341 
 
 
@@ -251,11 +251,12 @@ void loadClockFace() {
 
 void loadHandSprites() {
     String set = preferences.getString("handset", "");
-#ifdef DEBUG
-    Serial.println("[HANDS] Active hand set: " + set);
-#endif
+
+    
+    //Serial.println("[HANDS] Active hand set: " + set);
+
     bool usedDefault = false;
-    if (set != "") {
+    if (set != "" && set != "default") {
         struct HandConfig {
             String label;
             TFT_eSprite* sprite;
@@ -495,13 +496,13 @@ void updateClock() {
 }
 void updateBrightness() {
 
-    if (use_adc) {
+    if (currentBrightness != lastAppliedBrightness) {
+        loadClockFace();
+        loadHandSprites();
+        lastAppliedBrightness = currentBrightness;
+    }
 
-        if (currentBrightness != lastAppliedBrightness) {
-            loadClockFace();
-            loadHandSprites();
-            lastAppliedBrightness = currentBrightness;
-        }
+    if (use_adc) {
 
         int adcRaw = analogRead(ADC_PIN);
         adcHistory[adcIndex] = adcRaw;
@@ -529,8 +530,8 @@ void updateBrightness() {
         }
     }
     else {
-        currentBrightness = 255;    
-        targetBrightness = 255;
+        currentBrightness = maxBrightness;
+        targetBrightness = currentBrightness;
     }
 
 #ifdef TFT_Backlight
@@ -1161,7 +1162,7 @@ void setupWebServer() {
         size_t total = LittleFS.totalBytes();
         size_t used = LittleFS.usedBytes();
         html += "Connected to: <strong>" + WiFi.SSID() + "</strong> (" + WiFi.localIP().toString() + ")" + "&nbsp;&nbsp;";
-        html += "Storage: " + String(used / 1024) + " KB / " + String(total / 1024) + " KB <hr>";
+        html += "<br>Storage: " + String(used / 1024) + " KB / " + String(total / 1024) + " KB <hr>";
 
         html += "<h2>All Files on LittleFS</h2><table border='1'><tr><th align=left>Filename</th><th>Size (bytes)</th><th>Info</th><th>Action</th></tr>";
 
@@ -1195,7 +1196,7 @@ void setupWebServer() {
 
         size_t total = LittleFS.totalBytes();
         size_t used = LittleFS.usedBytes();
-        html += "Connected to: <strong>" + WiFi.SSID() + "</strong> (" + WiFi.localIP().toString() + ")" + "&nbsp;&nbsp;Storage: " + String(used / 1024) + " KB / " + String(total / 1024) + " KB<hr>";
+        html += "Connected to: <strong>" + WiFi.SSID() + "</strong> (" + WiFi.localIP().toString() + ")" + "&nbsp;&nbsp;<br>Storage: " + String(used / 1024) + " KB / " + String(total / 1024) + " KB<hr>";
 
         html += "<h2>ESP System Status</h2><ul>";
 
@@ -1349,7 +1350,7 @@ void setupWebServer() {
 
 
         html += "Connected to : <strong>" + WiFi.SSID() + " </strong > (" + WiFi.localIP().toString() + ")" + (WiFi.SSID() == wifi_ssid2 ? " (secondary)" : "") + " &nbsp;&nbsp; ";
-        html += "Storage used : " + String(used / 1024) + " KB / " + String(total / 1024) + " KB<hr>";
+        html += "<br>Storage used : " + String(used / 1024) + " KB / " + String(total / 1024) + " KB<hr>";
 
         html += "<h2>Manage Clock Face Files " + String(CLOCK_WIDTH) + " x " + String(CLOCK_HEIGHT) + "</h2><table border='1'><tr><th>Preview</th><th>Action</th></tr>";
 
@@ -1400,7 +1401,7 @@ void setupWebServer() {
         size_t total = LittleFS.totalBytes();
         size_t used = LittleFS.usedBytes();
         html += "Connected to: <strong>" + WiFi.SSID() + "</strong> (" + WiFi.localIP().toString() + ")" + "&nbsp;&nbsp;";
-        html += "Storage: " + String(used / 1024) + " KB / " + String(total / 1024) + " KB <hr>";
+        html += "<br>Storage: " + String(used / 1024) + " KB / " + String(total / 1024) + " KB <hr>";
         html += "<h2>Clock Setup</h2>";
 
         html += "<form action = '/save' method = 'POST'>";
@@ -1588,7 +1589,7 @@ void setupWebServer() {
         String html = "<!DOCTYPE html><html><head><title>Clock Hand Set Files</title><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:Arial;text-align:center;}table{margin:auto;}th,td{padding:10px;}img{height:50px;}</style></head><body>";
         size_t total = LittleFS.totalBytes();
         size_t used = LittleFS.usedBytes();
-        html += "Connected to: <strong>" + WiFi.SSID() + "</strong> (" + WiFi.localIP().toString() + ")" + "&nbsp;&nbsp;Storage: " + String(used / 1024) + " KB / " + String(total / 1024) + " KB<hr>";
+        html += "Connected to: <strong>" + WiFi.SSID() + "</strong> (" + WiFi.localIP().toString() + ")" + "&nbsp;&nbsp;<br>Storage: " + String(used / 1024) + " KB / " + String(total / 1024) + " KB<hr>";
         html += "<h2>Manage Clock Hand Sets " + String(HAND_WIDTH) + " x " + String(HAND_HEIGHT) + "</h2><table border = '1'><tr><th>Set</th><th>Preview</th><th>Action</th></tr>";
 
         String activeSet = preferences.getString("handset", "");
