@@ -6,7 +6,7 @@
 // optimiert für ESP32-S2 Mini  (als Lolin S2 Pico compiliert)
 // Filesystem: LittleFS
 // TFT: GC9A01 / GC9D01 / ILI9341
-// Partition: Default 4MB NO OTA, 2MB, 2MB"
+// Partition: Default 4MB NO OTA, 2MB, 2MB
 // TFT_eSPI: 2.5.34
 
 
@@ -16,8 +16,8 @@
 #define ESP32_S2
 
 // TFT
-//#define GC9A01
-#define GC9D01
+#define GC9A01
+//#define GC9D01
 //#define ILI9341 
 
 
@@ -148,15 +148,15 @@ String wifi_ssid;
 String wifi_pass;
 String wifi_ssid2;
 String wifi_pass2;
+
 String timezone = "CET-1CEST,M3.5.0,M10.5.0/3";
+String ntpServer = "pool.ntp.org";
+
 String selectedBackground = "/face_default.bmp";
 
-unsigned long secStartMicros = 0;
-int lastSec = -1;
 uint8_t bahnhofTick = 0;
 uint32_t bahnhofLastMillis = 0;
 bool bahnhofWaiting = false;
-
 
 uint16_t rowBuffer[CLOCK_WIDTH];
 
@@ -179,9 +179,6 @@ int adcHistory[ADC_SMOOTHING];
 int adcIndex = 0;
 int currentAdcAvg = 0;  // global definieren
 int currentLightPercent = 0;  // global speichern für Anzeige
-
-//bool smoothMinute = false;
-
 
 File uploadFile;
 String uploadFilePath = "";
@@ -481,8 +478,7 @@ void updateClock() {
     float hourAngle = (timeinfo.tm_hour % 12 + smoothMin / 60.0f) * 30.0f;
 
     
-
-   // backgroundSprite.fillSprite(TFT_BLACK);
+    // Ausgabe der Uhrzeit
     loadClockFace();
 
     hourHandSprite.pushRotated(&backgroundSprite, hourAngle, TRANSPARENT_COLOR);
@@ -665,10 +661,13 @@ void setup() {
         preferences.putUChar("storientation", 0);           
     }
      
-    // Standard-Zeitzone, falls nichts gespeichert ist
-    String timezone = preferences.getString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3");
-    configTzTime(timezone.c_str(), "pool.ntp.org", "time.nist.gov");
+    ntpServer = preferences.getString("ntpServer", "pool.ntp.org");
+    timezone = preferences.getString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3");
+    setTimezone(timezone);
+
+    Serial.println("[NTP] Aktueller NTP-Server: " + ntpServer);
     Serial.println("Zeitzone eingestellt auf: " + timezone);
+       
 
     pinMode(BUTTON1, INPUT_PULLDOWN);
 
@@ -742,7 +741,7 @@ void setup() {
     tft.setRotation(0);
     tft.fillScreen(TFT_BLACK);
 
-#ifdef GC9A01
+#ifndef GC9D01
     uint8_t rotation = preferences.getUChar("storientation", 0);
     tft.setRotation(rotation);
     Serial.printf("[TFT] Using stored rotation: %d\n", rotation);
@@ -754,7 +753,7 @@ void setup() {
     ledcWrite(TFT_Backlight, 255);
 #endif
 
-
+    
     backgroundSprite.createSprite(CLOCK_WIDTH, CLOCK_HEIGHT);
     backgroundSprite.setSwapBytes(true);
     backgroundSprite.setColorDepth(16);
@@ -837,6 +836,9 @@ bool connectWiFi(bool verbose_mode) {
         tft.setCursor(20, (CLOCK_HEIGHT / 2));
         tft.println(wifi_ssid);
     }
+
+    //WiFi.enableIPv6();
+
     WiFi.begin(wifi_ssid.c_str(), wifi_pass.c_str());
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
@@ -910,20 +912,10 @@ void setupNTP() {
     tft.setTextSize(TFT_TEXT_SIZE);
     tft.setCursor(10, (CLOCK_HEIGHT / 2));
 
-    String timezone = preferences.getString("timezone", "DE");
-
-    if (timezone == "DE") timezone = "CET-1CEST,M3.5.0,M10.5.0/3";         // auto
-    else if (timezone == "DE_S") timezone = "CEST-2";                      // permanent summer
-    else if (timezone == "DE_W") timezone = "CET-1";                       // permanent winter
-    else if (timezone == "UK") timezone = "GMT0BST,M3.5.0/1,M10.5.0";      // auto
-    else if (timezone == "UK_S") timezone = "BST-1";                       // permanent summer
-    else if (timezone == "UK_W") timezone = "GMT0";                        // permanent winter
-
-    //Serial.printf("[NTP] Timezone: %s\n", timezone.c_str());
-
+    timezone = preferences.getString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3");
 
     //Serial.println("[NTP] " + timezone);
-    configTzTime(timezone.c_str(), "pool.ntp.org", "time.nist.gov");
+    setTimezone(timezone);
     struct tm timeinfo;
     int attempts = 0;
     while (!getLocalTime(&timeinfo, 5000) && attempts < 10) {
@@ -931,7 +923,7 @@ void setupNTP() {
         tft.fillScreen(TFT_BLACK);
         tft.setTextColor(TFT_RED, TFT_BLACK);
         tft.setCursor(10, (CLOCK_HEIGHT / 2));
-        tft.printf("NTP failed (%d/10)...", attempts);
+        tft.printf("NTP failed (%d/10)", attempts);
         delay(2000);
     }
     if (attempts >= 10) {
@@ -945,8 +937,8 @@ void setupNTP() {
 
 void setTimezone(String tz) {
     preferences.putString("timezone", tz);
-    configTzTime(tz.c_str(), "pool.ntp.org", "time.nist.gov");
-    Serial.println("Set New Timezone: " + tz);
+    configTzTime(tz.c_str(), ntpServer.c_str());
+    Serial.println("Set Timezone: " + tz);
 }
 
 
@@ -954,31 +946,44 @@ void setupWebServer() {
 
     // Webserver konfigurieren
     server.on("/set_timezone", HTTP_POST, []() {
+        if (server.hasArg("ntpServer")) {
+            ntpServer = server.arg("ntpServer");
+            preferences.putString("ntpServer", ntpServer);
+            Serial.println("[NTP] NTP Server set to: " + ntpServer);    
+            setupNTP();
+        }
+
         if (server.hasArg("timezone")) {
             String tz = server.arg("timezone");
             preferences.putString("timezone", tz);
-            configTzTime(tz.c_str(), "pool.ntp.org", "time.nist.gov");
-            Serial.println("Timezone set to: " + tz);
+            setTimezone(tz);            
 
             server.send(200, "text/html",
                 "<!DOCTYPE html><html><head>"
                 "<meta http-equiv='refresh' content='3; url=/' />"
-                "<title>Timezone Updated</title></head>"
-                "<body><h2>Timezone updated to: " + tz + "</h2>"
+                "<title>NTP / Timezone Updated</title></head>"
+                "<body><h2>NTP / Timezone updated to: " + ntpServer + " / " + tz + "</h2>"
                 "<p>Returning to the main page in 3 seconds...</p></body></html>"
             );
         }
         else {
             server.send(400, "text/plain", "Timezone parameter missing");
         }
+        setupNTP();
         });
 
+     
 
     server.on("/timezone_form", HTTP_GET, []() {
+        String timezone = preferences.getString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3");
+
         String html = "<!DOCTYPE html><html><head><title>Set Timezone</title></head><body>";
-        html += "<h2>Set Timezone (DST String)</h2>";
+        html += "<h2>NTP Server / Timezone (DST String)</h2>";
         html += "<form method='POST' action='/set_timezone'>";
-        html += "<input type='text' name='timezone' placeholder='CET-1CEST,M3.5.0,M10.5.0/3' style='width: 300px;' required><br>";
+
+        html += "NTP Server: <input type='text' name='ntpServer' value='" + ntpServer + "'><br><br>";
+
+        html += "Timezone: <input type='text' name='timezone' value='" + String(timezone) + "' style = 'width: 300px;' required><br>";
         
         html += "<ul>";
         html += "<li><strong>Germany (DE)</strong> - With Daylight Saving Time (DST) automatically: <code>CET-1CEST,M3.5.0,M10.5.0/3</code></li>";
@@ -1015,6 +1020,7 @@ void setupWebServer() {
 
 
         html += "<button type='submit'>Save Timezone</button>";
+        html += "<br><a href='/'>Back</a></body></html>";
         html += "</form></body></html>";
         server.send(200, "text/html", html);
         });
@@ -1715,7 +1721,7 @@ void setupWebServer() {
         html += "<button type='submit'>Apply</button></form><hr>";
 
         html += "<h3>Upload New Hand Set</h3>";
-        html += "<small>Requirements: " + String(HAND_WIDTH) + " x " + String(HAND_HEIGHT) + " pixels, 16-bit BMP (RGB565), name must start with <code>hand_set + no e.g. hand_set1</code><br>Pivot point:" + String(int(HAND_WIDTH / 2)) + " / " + String(int(HAND_HEIGHT * 0.77)) + "<br><br>";
+        html += "<small>Requirements: " + String(HAND_WIDTH) + " x " + String(HAND_HEIGHT) + " pixels, 16-bit BMP (RGB565), <br>name must start with <code>hand_set + no + _hour, _minute or _second .bmp e.g. hand_set1_second.bmp</code><br>Pivot point:" + String(int(HAND_WIDTH / 2)) + " / " + String(int(HAND_HEIGHT * 0.77)) + "<br><br>";
         html += "<form method='POST' action='/uploadhandset' enctype='multipart/form-data'>";
         
         html += "File: <input type='file' name='upload' accept='.bmp' required><br><br>";
