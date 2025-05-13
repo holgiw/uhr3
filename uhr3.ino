@@ -152,6 +152,8 @@ String wifi_pass2;
 String timezone = "CET-1CEST,M3.5.0,M10.5.0/3";
 String ntpServer = "pool.ntp.org";
 
+bool initial = true;
+
 String selectedBackground = "/face_default.bmp";
 
 bool bahnhofMode;
@@ -161,6 +163,7 @@ bool showSecondHand;
 uint8_t bahnhofTick = 0;
 uint32_t bahnhofLastMillis = 0;
 bool bahnhofWaiting = false;
+float fastSecond = 972.0f;// 966.0f;
 
 uint16_t rowBuffer[CLOCK_WIDTH];
 
@@ -399,13 +402,49 @@ bool loadHandBmp(TFT_eSprite* sprite, const char* filename, int width, int heigh
 }
 
 void loop() {
+    static unsigned long lastUpdateClock = 0;
     server.handleClient();
     checkWiFiReconnect();
-    updateClock();
+    //updateClock();
     updateBrightness();
     checkNightlyTimeSync();
-    delay(20);
+    checkButton();
+
+    unsigned long now = millis();
+    if (now - lastUpdateClock > 19) {
+        lastUpdateClock = now;
+        updateClock();
+    }    
+    
+    //delay(20);
     yield();
+
+    initial = false;
+}
+
+void checkButton() {
+    static unsigned long lastPress = 0;
+    if (digitalRead(BUTTON1) == HIGH) {
+        unsigned long now = millis();
+        if (now - lastPress > 500) {
+            lastPress = now;
+            Serial.println("[BUTTON] Button pressed");
+            tft.fillScreen(TFT_BLACK);
+            tft.setTextColor(TFT_GREEN, TFT_BLACK);
+            tft.setTextSize(TFT_TEXT_SIZE);
+            tft.setCursor(20, (CLOCK_HEIGHT / 2) - (CLOCK_HEIGHT / 8));
+            tft.println("Connected to:");
+            tft.setCursor(20, (CLOCK_HEIGHT / 2));
+            tft.println(wifi_ssid);
+            tft.setCursor(20, (CLOCK_HEIGHT / 2) + (CLOCK_HEIGHT / 8));
+            tft.println(WiFi.localIP());
+
+            while (digitalRead(BUTTON1) == HIGH) {
+                delay(10);
+            }   
+            
+        }
+    }
 }
 
 void updateClock() {
@@ -429,9 +468,9 @@ void updateClock() {
         }
 
         if (!bahnhofWaiting) {
-            if (millis() - bahnhofLastMillis >= 966) {
+            if (millis() - bahnhofLastMillis >= fastSecond) {
                 bahnhofTick++;
-                bahnhofLastMillis += 966;
+                bahnhofLastMillis += fastSecond;
                 if (bahnhofTick >= 60) {
                     bahnhofTick = 60;
                     bahnhofWaiting = true;
@@ -446,7 +485,7 @@ void updateClock() {
             }
         }
 
-        float subTick = (millis() - bahnhofLastMillis) / 966.0f;
+        float subTick = (millis() - bahnhofLastMillis) / fastSecond;
         if (subTick > 1.0f) subTick = 1.0f;
         float smoothSec = (bahnhofTick >= 60) ? 60.0f : bahnhofTick + easeInOutSine(subTick);
         secAngle = smoothSec * 6.0f;
@@ -505,14 +544,20 @@ void updateBrightness() {
     if (use_adc) {
 
         int adcRaw = analogRead(ADC_PIN);
+
+        if (initial) {
+            for (int i = 0; i < ADC_SMOOTHING; i++) adcHistory[i] = adcRaw;
+        }
+
         adcHistory[adcIndex] = adcRaw;
         adcIndex = (adcIndex + 1) % ADC_SMOOTHING;
 
-        int avg = 0;
+        uint32_t avg = 0;
         for (int i = 0; i < ADC_SMOOTHING; i++) avg += adcHistory[i];
         avg /= ADC_SMOOTHING;
 
         currentAdcAvg = avg;  // speichern
+        
         
 
 
@@ -524,9 +569,15 @@ void updateBrightness() {
 
         currentLightPercent = lightPercent;
 
+        if (initial) currentBrightness = targetBrightness;
+
         if (currentBrightness != targetBrightness) {
-            if (currentBrightness < targetBrightness) currentBrightness++;
-            else currentBrightness--;
+            if (currentBrightness < targetBrightness) {
+                currentBrightness++;
+            }
+            else {
+                currentBrightness--;
+            }
         }
     }
     else {
@@ -635,19 +686,34 @@ void setup() {
 
     if (preferences.getBool("firstStart", true)) {
         Serial.println("[Preferences] First start detected, initializing...");
+
         preferences.putBool("firstStart", false);
+
+        preferences.putString("ssid", "");
+        preferences.putString("pass", "");
+        preferences.putString("ssid2", "");
+        preferences.putString("pass2", "");
+
+        preferences.putString("ntpServer", "pool.ntp.org");
+        preferences.putString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3");
+
+        preferences.putUChar("storientation", 0);
+        preferences.putString("handset", "default");
+        preferences.putString("background", "/faces/default");
+
         preferences.putBool("bahnhof", true);   
         preferences.putBool("secondhand", true);   
+        preferences.putBool("smoothMinute", false);
+
 #ifdef GC9D01
         preferences.putUChar("minBrightness", 5); 
 #else
-        preferences.putUChar("", 50);
+        preferences.putUChar("minBrightness", 100);
 #endif
         preferences.putUChar("maxBrightness", 255); 
         
-        preferences.putInt("lowThreshold", 20);
-        preferences.putInt("highThreshold", 50);
-
+        preferences.putInt("lowThreshold", 40);
+        preferences.putInt("highThreshold", 60);
 
         preferences.putUInt("centerColor", TFT_RED);   
 #ifdef GC9A01
@@ -655,7 +721,8 @@ void setup() {
 #else
         preferences.putUInt("centerSize", 3);
 #endif
-        preferences.putUChar("storientation", 0);           
+       
+         
     }
      
     ntpServer = preferences.getString("ntpServer", "pool.ntp.org");
@@ -1222,7 +1289,7 @@ void setupWebServer() {
         preferences.putBool("use_adc", use_adc);
         preferences.putInt("lowThreshold", lowThreshold);
         preferences.putInt("highThreshold", highThreshold);
-        preferences.putUChar("currentBrightness", currentBrightness);
+       
         preferences.putUChar("maxBrightness", maxBrightness);        
         preferences.putUChar("minBrightness", minBrightness);
 
@@ -1392,7 +1459,7 @@ void setupWebServer() {
         
         html += "<li><b>minBrightness</b>: " + String(preferences.getUChar("minBrightness", 100)) + "</li>";
         html += "<li><b>maxBrightness</b>: " + String(preferences.getUChar("maxBrightness", 255)) + "</li>";
-        html += "<li><b>currentBrightness</b>: " + String(preferences.getUChar("currentBrightness", 255)) + "</li>";
+        
         html += "<li><b>lowThreshold</b>: " + String(preferences.getInt("lowThreshold", 40)) + "</li>";
         html += "<li><b>highThreshold</b>: " + String(preferences.getInt("highThreshold", 60)) + "</li>";
         html += "</ul>";
