@@ -37,7 +37,7 @@
 TFT_eSPI tft = TFT_eSPI();
 WebServer server(80);
 Preferences preferences;
-bool showSecondHand = true;
+
 
 
 #ifdef ESP32_D1  // Mini D1 ESP32 oder LOLIN32 (der mit dem Akku Anschluß)
@@ -153,6 +153,10 @@ String timezone = "CET-1CEST,M3.5.0,M10.5.0/3";
 String ntpServer = "pool.ntp.org";
 
 String selectedBackground = "/face_default.bmp";
+
+bool bahnhofMode;
+bool smoothMinute;
+bool showSecondHand;
 
 uint8_t bahnhofTick = 0;
 uint32_t bahnhofLastMillis = 0;
@@ -408,13 +412,6 @@ void updateClock() {
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo)) return;
 
-  // preferences.putBool("smoothMinute", true);
-
-    bool bahnhofMode = preferences.getBool("bahnhof", true);
-    bool smoothMinute = preferences.getBool("smoothMinute", false);
-
-   // smoothMinute = true;
-   // Serial.println("[CLOCK] smoothMinute: " + smoothMinute);
 
     int actualSec = timeinfo.tm_sec;
     static int lastSec = -1;
@@ -667,6 +664,9 @@ void setup() {
 
     Serial.println("[NTP] Aktueller NTP-Server: " + ntpServer);
     Serial.println("Zeitzone eingestellt auf: " + timezone);
+
+    bahnhofMode = preferences.getBool("bahnhof", true);
+    smoothMinute = preferences.getBool("smoothMinute", false);
        
 
     pinMode(BUTTON1, INPUT_PULLDOWN);
@@ -1116,15 +1116,12 @@ void setupWebServer() {
 
     server.on("/applydisplaysettings", HTTP_POST, []() {
         // Save to Preferences
-        bool bahnhof = server.hasArg("enableBahnhof");
-        bool second = server.hasArg("showSecond");
-        
-        bool smoothMinute = server.hasArg("smoothMinute");
-        Serial.println("[SMOOTH] Smooth minute hand: " + smoothMinute);
+        bahnhofMode = server.hasArg("enableBahnhof");
+        showSecondHand = server.hasArg("showSecond");        
+        smoothMinute = server.hasArg("smoothMinute");
 
-
-        preferences.putBool("bahnhof", bahnhof);
-        preferences.putBool("secondhand", second);
+        preferences.putBool("bahnhof", bahnhofMode);
+        preferences.putBool("secondhand", showSecondHand);
         preferences.putBool("smoothMinute", smoothMinute);
 
 
@@ -1137,15 +1134,6 @@ void setupWebServer() {
                 loadHandSprites();
             }
         }
-
-        timezone = server.arg("timezone");
-        preferences.putString("timezone", timezone);
-        
-        setupNTP();
-
-
-        // Apply runtime variables
-        showSecondHand = second;
 
         server.send(200, "text/html",
             "<!DOCTYPE html><html><head><meta http-equiv='refresh' content='3; url=/'><title>Gespeichert</title></head>"
@@ -1383,11 +1371,45 @@ void setupWebServer() {
         html += "<li>TFT_Backlight: " + String(TFT_Backlight) + "</li>";  
 #endif
         html += "<br>";
+
+        
+        html += "<h3>Actual Preferences</h3><ul>";
+        html += "<li><b>ssid</b>: " + preferences.getString("ssid", "") + "</li>";
+        html += "<li><b>ssid2</b>: " + preferences.getString("ssid2", "") + "</li>";
+        html += "<li><b>ntpServer</b>: " + preferences.getString("ntpServer", "pool.ntp.org") + "</li>";
+        html += "<li><b>timezone</b>: " + preferences.getString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3") + "</li>";
+        html += "<li><b>background</b>: " + preferences.getString("background", "/faces/default") + "</li>";
+        html += "<li><b>handset</b>: " + preferences.getString("handset", "") + "</li>";
+        html += "<li><b>centerColor</b>: " + String(preferences.getUInt("centerColor", TFT_RED), HEX) + "</li>";
+        html += "<li><b>centerSize</b>: " + String(preferences.getUInt("centerSize", 6)) + "</li>";
+        html += "<li><b>storientation</b>: " + String(preferences.getUChar("storientation", 0)) + "</li>";
+
+        // Booleans als Text
+        html += "<li><b>use_adc</b>: " + String(preferences.getBool("use_adc", true) ? "true" : "false") + "</li>";
+        html += "<li><b>bahnhof</b>: " + String(preferences.getBool("bahnhof", true) ? "true" : "false") + "</li>";
+        html += "<li><b>secondhand</b>: " + String(preferences.getBool("secondhand", true) ? "true" : "false") + "</li>";
+        html += "<li><b>smoothMinute</b>: " + String(preferences.getBool("smoothMinute", false) ? "true" : "false") + "</li>";
+        
+        html += "<li><b>minBrightness</b>: " + String(preferences.getUChar("minBrightness", 100)) + "</li>";
+        html += "<li><b>maxBrightness</b>: " + String(preferences.getUChar("maxBrightness", 255)) + "</li>";
+        html += "<li><b>currentBrightness</b>: " + String(preferences.getUChar("currentBrightness", 255)) + "</li>";
+        html += "<li><b>lowThreshold</b>: " + String(preferences.getInt("lowThreshold", 40)) + "</li>";
+        html += "<li><b>highThreshold</b>: " + String(preferences.getInt("highThreshold", 60)) + "</li>";
+        html += "</ul>";
+
+
+        html += "</br>";
+
+
+
+
         html += "<li>Contact: holger.wagenlehner@gmx.de</li>";
 
 
 
-        html += "</ul><br><a href='/'>Back</a></body></html>";
+        html += "</ul>";
+            
+        html += "<br><a href = '/'>Back</a></body></html>";
         server.send(200, "text/html", html);
         });
 
