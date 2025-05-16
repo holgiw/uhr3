@@ -16,8 +16,8 @@
 #define ESP32_S2
 
 // TFT
-#define GC9A01
-//#define GC9D01
+//#define GC9A01
+#define GC9D01
 //#define ILI9341 
 
 
@@ -524,6 +524,11 @@ void updateClock() {
     // Stundenzeiger
     float hourAngle = (timeinfo.tm_hour % 12 + smoothMin / 60.0f) * 30.0f;
 
+    int rotation = preferences.getUChar("storientation", 0);    
+    secAngle = rotatedAngle(secAngle, rotation);
+    minAngle = rotatedAngle(minAngle, rotation);
+    hourAngle = rotatedAngle(hourAngle, rotation);
+
     
     // Ausgabe der Uhrzeit
     loadClockFace();
@@ -544,6 +549,8 @@ void updateClock() {
     
     backgroundSprite.pushSprite(0, 0);
 }
+
+
 void updateBrightness() {
 
     if (currentBrightness != lastAppliedBrightness) {
@@ -824,11 +831,11 @@ void setup() {
     tft.setRotation(0);
     tft.fillScreen(TFT_BLACK);
 
-#ifndef GC9D01
+
     uint8_t rotation = preferences.getUChar("storientation", 0);
-    tft.setRotation(rotation);
+//    tft.setRotation(rotation);
     Serial.printf("[TFT] Using stored rotation: %d\n", rotation);
-#endif
+
 
 #ifdef TFT_Backlight
     pinMode(TFT_Backlight, OUTPUT);
@@ -1212,7 +1219,8 @@ void setupWebServer() {
             uint8_t rot = server.arg("rotation").toInt();
             if (rot <= 3) {
                 preferences.putUChar("storientation", rot);
-                tft.setRotation(rot); // sofort anwenden
+            
+            //    tft.setRotation(rot); // sofort anwenden
                 loadClockFace();      // neu zeichnen mit neuer Ausrichtung
                 loadHandSprites();
             }
@@ -1638,7 +1646,7 @@ void setupWebServer() {
         html += "> Smooth Minute Hand</td>";
 
 
-#ifndef GC9D01
+
         uint8_t rot = preferences.getUChar("storientation", 0);
         html += "<td>Rotation: <select name='rotation'>";
         for (int i = 0; i <= 3; i++) {
@@ -1647,7 +1655,7 @@ void setupWebServer() {
             html += ">" + String(i) + "</option>";
         }
         html += "</select></td>";
-#endif
+
 
         html += "<td valign=bottom><button type='submit'>Apply</button></td>";
         html += "</tr></table></form>";
@@ -2025,19 +2033,93 @@ bool loadBmpToSprite(TFT_eSprite* sprite, const char* filename) {
     height = abs(height);
 
     bmp.seek(offset);
-    for (int y = 0; y < height; y++) {
-        int row = flip ? height - 1 - y : y;
-        bmp.read((uint8_t*)rowBuffer, CLOCK_WIDTH * 2);
 
-        for (int x = 0; x < CLOCK_HEIGHT; x++) {
-            rowBuffer[x] = setPixelBrightness(rowBuffer[x]);
-        }
-
-        sprite->pushImage(0, row, CLOCK_WIDTH, 1, rowBuffer);
+    // Temporärer Buffer für die Bitmap-Daten
+    uint16_t* tempBuffer = (uint16_t*)ps_malloc(CLOCK_WIDTH * CLOCK_HEIGHT * sizeof(uint16_t));
+    if (!tempBuffer) {
+        Serial.println("PSRAM konnte nicht allokiert werden für Bitmap-Daten!");
+        bmp.close();
+        return false;
     }
+
+    for (int y = 0; y < height; y++) {
+        bmp.read((uint8_t*)&tempBuffer[y * width], width * 2);
+    }
+
+    // Neuen Buffer erstellen, der rotiert ist
+    uint16_t* rotatedBuffer = (uint16_t*)ps_malloc(CLOCK_WIDTH * CLOCK_HEIGHT * sizeof(uint16_t));
+    if (!rotatedBuffer) {
+        Serial.println("PSRAM konnte nicht allokiert werden für Rotation!");
+        free(tempBuffer);
+        bmp.close();
+        return false;
+    }
+
+    int rotation = preferences.getUChar("storientation", 0);    
+
+    // 4. Pixelrotation (Korrektur der Spiegelung und Drehung)
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int newX = x, newY = y;
+
+            switch (rotation) {
+            case 0: // 0°
+                newX = x;
+                newY = y;
+                break;
+            case 1: // 90°
+                newX = y;
+                newY = width - x - 1;
+                break;
+            case 2: // 180°
+                newX = width - x - 1;
+                newY = height - y - 1;
+                break;
+            case 3: // 270°
+                newX = height - y - 1;
+                newY = x;
+                break;
+            }
+
+            // Korrektur für invertierte Darstellung
+            newY = height - newY - 1;
+
+            if (newX >= 0 && newX < width && newY >= 0 && newY < height) {
+                rotatedBuffer[newY * width + newX] = setPixelBrightness(tempBuffer[y * width + x]);
+            }
+        }
+    }
+
+    // 5. In den Sprite pushen
+    sprite->setSwapBytes(true); // Byte-Reihenfolge für TFT_eSPI korrigieren
+    sprite->fillSprite(TFT_BLACK); // Hintergrund löschen
+    for (int y = 0; y < height; y++) {
+        sprite->pushImage(0, y, width, 1, &rotatedBuffer[y * width]);
+    }
+
+    // 6. Speicher freigeben
+    free(tempBuffer);
+    free(rotatedBuffer);
 
     bmp.close();
     return true;
+}
+
+// Rotiert die Zeiger basierend auf der Display-Rotation
+float rotatedAngle(float angle, int rotation) {
+    switch (rotation) {
+    case 1:
+    case 90:
+        return angle + 90;
+    case 2: 
+    case 180:
+        return angle + 180;
+    case 3:
+    case 270:
+        return angle + 270;
+    default:
+        return angle;
+    }
 }
 
 bool checkBmpFormat(const String& filename, int expectedWidth = CLOCK_WIDTH, int expectedHeight = CLOCK_HEIGHT) {
