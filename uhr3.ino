@@ -191,6 +191,12 @@ File uploadFile;
 String uploadFilePath = "";
 bool uploadSuccess = false;
 
+/// <summary>
+/// Passt die Helligkeit eines Pixels basierend auf der aktuellen Helligkeitseinstellung an.
+/// </summary>
+/// <param name="pixel">Der 16-Bit-Farbwert des Pixels, der angepasst werden soll.</param>
+/// <returns>Der angepasste 16-Bit-Farbwert des Pixels, basierend auf der aktuellen Helligkeit. Wenn die Helligkeit maximal ist oder der Pixel transparent/schwarz ist, wird der ursprüngliche Wert zurückgegeben.</returns>
+ 
 uint16_t setPixelBrightness(uint16_t pixel) {
 
 #ifdef TFT_Backlight
@@ -220,7 +226,9 @@ uint16_t setPixelBrightness(uint16_t pixel) {
 #endif
 }
 
-
+/// <summary>
+/// Lädt das Zifferblatt, indem entweder ein benutzerdefinierter Hintergrund oder ein Standardhintergrund verwendet wird.           
+/// </summary>  
 void loadClockFace() {
     if (LittleFS.exists(selectedBackground)) {
         File bmp = LittleFS.open(selectedBackground, "r");
@@ -260,6 +268,9 @@ void loadClockFace() {
 
 }
 
+/// <summary>
+/// Lädt die Grafiken für die Zeiger eines Uhren-Widgets, entweder aus einer benutzerdefinierten Konfiguration oder aus Standardwerten.
+/// </summary>  
 void loadHandSprites() {
     String set = preferences.getString("handset", "");
 
@@ -352,7 +363,7 @@ void loadHandSprites() {
 #endif
     }
 }
-
+ 
 // Hilfsfunktion zum Laden von Zeiger-BMPs 
 bool loadHandBmp(TFT_eSprite* sprite, const char* filename, int width, int height) {
     File bmp = LittleFS.open(filename, "r");
@@ -563,14 +574,15 @@ void updateBrightness() {
 
         int lightPercent = map(avg, 0, 4095, 5, 100);
        
-        if (lightPercent < lowThreshold && targetBrightness != minBrightness) targetBrightness = minBrightness;
+        if (lightPercent < lowThreshold) targetBrightness = minBrightness;
 
-        else if (lightPercent > highThreshold && targetBrightness != maxBrightness) targetBrightness = maxBrightness;
+        else if (lightPercent > highThreshold) targetBrightness = maxBrightness;
 
         currentLightPercent = lightPercent;
 
         if (initial) currentBrightness = targetBrightness;
 
+#ifdef BACKLIGHT
         if (currentBrightness != targetBrightness) {
             if (currentBrightness < targetBrightness) {
                 currentBrightness++;
@@ -579,6 +591,10 @@ void updateBrightness() {
                 currentBrightness--;
             }
         }
+#else
+        currentBrightness = targetBrightness;
+#endif
+
     }
     else {
         currentBrightness = maxBrightness;
@@ -1447,7 +1463,7 @@ void setupWebServer() {
         html += "<li><b>timezone</b>: " + preferences.getString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3") + "</li>";
         html += "<li><b>background</b>: " + preferences.getString("background", "/faces/default") + "</li>";
         html += "<li><b>handset</b>: " + preferences.getString("handset", "") + "</li>";
-        html += "<li><b>centerColor</b>: " + String(preferences.getUInt("centerColor", TFT_RED), HEX) + "</li>";
+        html += "<li><b>centerColor (RGB565)</b>: " + String(preferences.getUInt("centerColor", TFT_RED), HEX) + "</li>";
         html += "<li><b>centerSize</b>: " + String(preferences.getUInt("centerSize", 6)) + "</li>";
         html += "<li><b>storientation</b>: " + String(preferences.getUChar("storientation", 0)) + "</li>";
 
