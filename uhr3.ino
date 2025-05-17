@@ -167,6 +167,8 @@ float fastSecond = 972.0f;// 966.0f;
 
 uint16_t rowBuffer[CLOCK_WIDTH];
 
+static bool psramAvailable = false;
+
 uint16_t adc_min = 0;
 uint16_t adc_max = 0;   
 bool use_adc = false; 
@@ -458,79 +460,118 @@ void checkButton() {
     }
 }
 
+static float lastHourAngle = 0.0f;
+static float lastMinuteAngle = 0.0f;
+
 void updateClock() {
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo)) return;
 
+    int orientation = preferences.getUChar("storientation", 0);
 
-    int actualSec = timeinfo.tm_sec;
-    static int lastSec = -1;
+    float secAngle = timeinfo.tm_sec * 6.0f;
+    float minAngle = timeinfo.tm_min * 6.0f;
 
-    float secAngle;
+    // Fehler behoben: Korrekte Berechnung des Stundenzeigers
+    float hourAngle = (timeinfo.tm_hour % 12) * 30.0f + (timeinfo.tm_min / 2.0f) + (timeinfo.tm_sec / 120.0f);
+
+    // Bahnhof Mode optimiert
+    static uint8_t bahnhofTick = 0;
+    static uint32_t bahnhofLastMillis = 0;
+    static bool bahnhofWaiting = false;
+    static bool firstRun = true;
+
+    unsigned long currentMillis = millis();
+
+    if (firstRun) {
+        bahnhofTick = timeinfo.tm_sec;
+        bahnhofLastMillis = millis();
+        bahnhofWaiting = false;
+        firstRun = false;
+
+        // Korrekte Initialisierung des Stundenzeigers
+        lastHourAngle = rotatedAngle(hourAngle, orientation);
+        lastMinuteAngle = rotatedAngle(minAngle, orientation);
+
+        // Hier direkt die Zeiger auf die aktuelle Position setzen
+        hourHandSprite.pushRotated(&backgroundSprite, lastHourAngle, TRANSPARENT_COLOR);
+        minuteHandSprite.pushRotated(&backgroundSprite, lastMinuteAngle, TRANSPARENT_COLOR);
+        if (showSecondHand) {
+            secondHandSprite.pushRotated(&backgroundSprite, rotatedAngle(secAngle, orientation), TRANSPARENT_COLOR);
+        }
+        backgroundSprite.pushSprite(0, 0); // Sofort zeichnen
+    }
+
     if (bahnhofMode) {
-        static uint8_t bahnhofTick = 0;
-        static uint32_t bahnhofLastMillis = 0;
-        static bool bahnhofWaiting = false;
+        if (!bahnhofWaiting && currentMillis - bahnhofLastMillis >= fastSecond) {
+            bahnhofTick++;
+            bahnhofLastMillis += fastSecond;
 
-        if (bahnhofLastMillis == 0) {
-            bahnhofTick = actualSec;
-            bahnhofLastMillis = millis();
-            bahnhofWaiting = false;
+            if (bahnhofTick >= 60) {
+                bahnhofTick = 60;
+                bahnhofWaiting = true;
+            }
+        }
+        else if (bahnhofWaiting && currentMillis - bahnhofLastMillis >= 1000) {
+            if (timeinfo.tm_sec == 0) {
+                bahnhofTick = 0;
+                bahnhofWaiting = false;
+                bahnhofLastMillis = currentMillis;
+            }
         }
 
-        if (!bahnhofWaiting) {
-            if (millis() - bahnhofLastMillis >= fastSecond) {
-                bahnhofTick++;
-                bahnhofLastMillis += fastSecond;
-                if (bahnhofTick >= 60) {
-                    bahnhofTick = 60;
-                    bahnhofWaiting = true;
-                }
+        float subTick = (currentMillis - bahnhofLastMillis) / fastSecond;
+        if (subTick > 1.0f) subTick = 1.0f;
+
+        float smoothSec = (bahnhofTick >= 60) ? 60.0f : bahnhofTick + easeInOutSine(subTick);
+
+        if (smoothSec < 60.0f) {
+            secAngle = rotatedAngle(smoothSec * 6.0f, orientation);
+        }
+        else {
+            secAngle = rotatedAngle(0, orientation);
+        }
+
+        // Minutenzeiger springt im Bahnhof-Modus
+        minAngle = rotatedAngle(timeinfo.tm_min * 6.0f, orientation);
+
+    }
+    else {
+        secAngle = rotatedAngle(secAngle, orientation);
+
+        // Minutenzeiger smooth im normalen Modus
+        float targetMinAngle = rotatedAngle(minAngle, orientation);
+
+        if (abs(targetMinAngle - lastMinuteAngle) > 0.1f) {
+            if (targetMinAngle > lastMinuteAngle) {
+                lastMinuteAngle += 0.1f;
+            }
+            else {
+                lastMinuteAngle -= 0.1f;
             }
         }
         else {
-            if (actualSec == 0) {
-                bahnhofTick = 0;
-                bahnhofWaiting = false;
-                bahnhofLastMillis = millis();
-            }
+            lastMinuteAngle = targetMinAngle;
         }
+        minAngle = lastMinuteAngle;
+    }
 
-        float subTick = (millis() - bahnhofLastMillis) / fastSecond;
-        if (subTick > 1.0f) subTick = 1.0f;
-        float smoothSec = (bahnhofTick >= 60) ? 60.0f : bahnhofTick + easeInOutSine(subTick);
-        secAngle = smoothSec * 6.0f;
+    // Stundenzeiger smooth im normalen Modus (korrekte Berechnung)
+    float targetHourAngle = rotatedAngle(hourAngle, orientation);
+
+    if (abs(targetHourAngle - lastHourAngle) > 0.05f) {
+        if (targetHourAngle > lastHourAngle) {
+            lastHourAngle += (targetHourAngle - lastHourAngle) * 0.1f;
+        }
+        else {
+            lastHourAngle -= (lastHourAngle - targetHourAngle) * 0.1f;
+        }
     }
     else {
-        if (actualSec != lastSec) {
-            lastSec = actualSec;
-        }
-        secAngle = actualSec * 6.0f;
+        lastHourAngle = targetHourAngle;
     }
+    hourAngle = lastHourAngle;
 
-    // Minutenzeiger:
-     
-    float smoothMin;
-    if (smoothMinute) {       
-        smoothMin = timeinfo.tm_min + (timeinfo.tm_sec / 60.0f);
-    }
-    else {
-        smoothMin = timeinfo.tm_min;
-    }
-
-    float minAngle = smoothMin * 6.0f;
-
-
-    // Stundenzeiger
-    float hourAngle = (timeinfo.tm_hour % 12 + smoothMin / 60.0f) * 30.0f;
-
-    int rotation = preferences.getUChar("storientation", 0);    
-    secAngle = rotatedAngle(secAngle, rotation);
-    minAngle = rotatedAngle(minAngle, rotation);
-    hourAngle = rotatedAngle(hourAngle, rotation);
-
-    
-    // Ausgabe der Uhrzeit
     loadClockFace();
 
     hourHandSprite.pushRotated(&backgroundSprite, hourAngle, TRANSPARENT_COLOR);
@@ -546,7 +587,7 @@ void updateClock() {
         color = setPixelBrightness(color);
         backgroundSprite.fillCircle(CLOCK_WIDTH / 2, CLOCK_HEIGHT / 2, size, color);
     }
-    
+
     backgroundSprite.pushSprite(0, 0);
 }
 
@@ -589,7 +630,7 @@ void updateBrightness() {
 
         if (initial) currentBrightness = targetBrightness;
 
-#ifdef BACKLIGHT
+#ifdef TFT_Backlight
         if (currentBrightness != targetBrightness) {
             if (currentBrightness < targetBrightness) {
                 currentBrightness++;
@@ -706,6 +747,22 @@ void setup() {
     delay(500);
 
     preferences.begin("clock", false);
+
+    // Prüfen, ob PSRAM vorhanden ist
+    if (psramFound()) {
+        psramAvailable = true;
+        Serial.println("[INFO] PSRAM gefunden, Software-Rotation wird verwendet.");
+    }
+    else {
+        psramAvailable = false;
+        Serial.println("[INFO] Kein PSRAM gefunden, Hardware-Rotation wird verwendet.");
+#ifdef GC9D01
+        preferences.putUChar("storientation", 0); 
+#endif
+    }
+
+
+    
 
     if (preferences.getBool("firstStart", true)) {
         Serial.println("[Preferences] First start detected, initializing...");
@@ -833,8 +890,19 @@ void setup() {
 
 
     uint8_t rotation = preferences.getUChar("storientation", 0);
-//    tft.setRotation(rotation);
-    Serial.printf("[TFT] Using stored rotation: %d\n", rotation);
+
+#ifndef GC9D01
+    tft.setRotation(rotation);  
+#else
+    if (!psramAvailable) {
+        rotation = 0;
+        preferences.putUChar("storientation", rotation);
+        tft.setRotation(rotation);
+        Serial.printf("[TFT] Using stored rotation: %d\n", rotation);
+    }
+#endif
+
+    
 
 
 #ifdef TFT_Backlight
@@ -888,7 +956,7 @@ void setup() {
 }
 
 void startAP() {
-#ifdef TFT_BACKLIGHT
+#ifdef TFT_Backlight
     ledcWrite(TFT_Backlight, 255);
 #endif
     WiFi.softAP("clock123", "clock123");
@@ -906,7 +974,7 @@ void startAP() {
 }
 
 bool connectWiFi(bool verbose_mode) {
-#ifdef TFT_BACKLIGHT
+#ifdef TFT_Backlight
     ledcWrite(TFT_Backlight, 255);
 #endif
     if (wifi_ssid == "" && wifi_ssid2 == "") return false;
@@ -1590,7 +1658,7 @@ void setupWebServer() {
         });
 
     server.on("/", HTTP_GET, []() {
-       
+
 
         String html = "<!DOCTYPE html><html><head><title>Clock Setup</title><meta name='viewport' content='width=device-width, initial-scale=1'>";
         html += "<style>body{font-family:Arial;text-align:center;}input,select,button{margin:10px;padding:10px;width:80%;}</style></head><body>";
@@ -1604,7 +1672,7 @@ void setupWebServer() {
 
         html += "<h3>Primary WiFi</h3>";
         html += "<input name='ssid' placeholder='SSID' value='" + wifi_ssid + "'><br>";
-        
+
 
         html += "<input name='pass' id='pass' placeholder='Password' type='password' value=''><br>";
         html += "<small>Password is hidden. Leave empty to keep current.</small><br><br>";
@@ -1616,7 +1684,7 @@ void setupWebServer() {
         html += "<small>Password is hidden. Leave empty to keep current.</small><br>";
 
         html += "<br>";
-        
+
 
         html += "<button type='submit'>Save</button></form><hr>";
 
@@ -1629,8 +1697,8 @@ void setupWebServer() {
 
         html += "<li><a href='/timezone_form'>Set Timezone</a></li>";
 
-        
-        
+
+
         html += "<table style='margin:auto;text-align:left;'><tr>";
 
         html += "<td><input type='checkbox' name='enableBahnhof' value='1' ";
@@ -1646,7 +1714,7 @@ void setupWebServer() {
         html += "> Smooth Minute Hand</td>";
 
 
-
+        
         uint8_t rot = preferences.getUChar("storientation", 0);
         html += "<td>Rotation: <select name='rotation'>";
         for (int i = 0; i <= 3; i++) {
@@ -1655,6 +1723,7 @@ void setupWebServer() {
             html += ">" + String(i) + "</option>";
         }
         html += "</select></td>";
+       
 
 
         html += "<td valign=bottom><button type='submit'>Apply</button></td>";
@@ -2009,7 +2078,58 @@ void handleFileUpload() {
     }
 }
 
+
 bool loadBmpToSprite(TFT_eSprite* sprite, const char* filename) {
+#ifndef GC9A01
+    if (psramAvailable) {
+        return loadBmpToSprite_PS_RAM(sprite, filename);
+    }
+#endif
+
+    File bmp = LittleFS.open(filename, "r");
+    if (!bmp) return false;
+
+    uint8_t header[54];
+    if (bmp.read(header, 54) != 54 || header[0] != 'B' || header[1] != 'M') {
+        bmp.close();
+        return false;
+    }
+
+    int32_t width = *(int32_t*)&header[18];
+    int32_t height = *(int32_t*)&header[22];
+    uint16_t bpp = *(uint16_t*)&header[28];
+    uint32_t offset = *(uint32_t*)&header[10];
+
+    if (width != CLOCK_WIDTH || abs(height) != CLOCK_HEIGHT || bpp != 16) {
+        bmp.close();
+        return false;
+    }
+
+    bool flip = height > 0;
+    height = abs(height);
+
+    bmp.seek(offset);
+    for (int y = 0; y < height; y++) {
+        int row = flip ? height - 1 - y : y;
+        bmp.read((uint8_t*)rowBuffer, CLOCK_WIDTH * 2);
+
+        for (int x = 0; x < CLOCK_HEIGHT; x++) {
+            rowBuffer[x] = setPixelBrightness(rowBuffer[x]);
+        }
+
+        sprite->pushImage(0, row, CLOCK_WIDTH, 1, rowBuffer);
+    }
+
+    bmp.close();
+    return true;
+}
+
+
+
+
+bool loadBmpToSprite_PS_RAM(TFT_eSprite* sprite, const char* filename) {
+
+    
     File bmp = LittleFS.open(filename, "r");
     if (!bmp) return false;
 
@@ -2034,6 +2154,7 @@ bool loadBmpToSprite(TFT_eSprite* sprite, const char* filename) {
 
     bmp.seek(offset);
 
+    
     // Temporärer Buffer für die Bitmap-Daten
     uint16_t* tempBuffer = (uint16_t*)ps_malloc(CLOCK_WIDTH * CLOCK_HEIGHT * sizeof(uint16_t));
     if (!tempBuffer) {
@@ -2106,20 +2227,11 @@ bool loadBmpToSprite(TFT_eSprite* sprite, const char* filename) {
 }
 
 // Rotiert die Zeiger basierend auf der Display-Rotation
-float rotatedAngle(float angle, int rotation) {
-    switch (rotation) {
-    case 1:
-    case 90:
-        return angle + 90;
-    case 2: 
-    case 180:
-        return angle + 180;
-    case 3:
-    case 270:
-        return angle + 270;
-    default:
-        return angle;
-    }
+float rotatedAngle(float angle, int orientation) {
+    if (psramAvailable) {
+        return angle + (orientation * 90);
+    }   
+    return angle;
 }
 
 bool checkBmpFormat(const String& filename, int expectedWidth = CLOCK_WIDTH, int expectedHeight = CLOCK_HEIGHT) {
