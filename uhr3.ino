@@ -16,8 +16,8 @@
 #define ESP32_S2
 
 // TFT
-//#define GC9A01
-#define GC9D01
+#define GC9A01
+//#define GC9D01
 //#define ILI9341 
 
 
@@ -87,9 +87,9 @@ Preferences preferences;
 #define TFT_Backlight 3  // Backlight
 #define BACKLIGHT_CHANNEL 0  // PWM channel
 #define BACKLIGHT_FREQ 5000
-#define BACKLIGHT_RESOLUTION 8
+#define BACKLIGHT_RESOLUTION 8 
 #endif
-
+    
 #endif
 
 #ifdef GC9A01
@@ -125,8 +125,8 @@ Preferences preferences;
 #ifdef ILI9341
 #include "graphic/240/clock_default.h"
 
-#define TFT_WIDTH 160
-#define TFT_HEIGHT 160
+#define TFT_WIDTH 240
+#define TFT_HEIGHT 320
 
 #define CLOCK_WIDTH 240
 #define CLOCK_HEIGHT 240
@@ -150,7 +150,8 @@ String wifi_ssid2;
 String wifi_pass2;
 
 String timezone = "CET-1CEST,M3.5.0,M10.5.0/3";
-String ntpServer = "pool.ntp.org";
+String ntpServer1 = "pool.ntp.org";
+String ntpServer2 = "time.nist.gov";
 
 bool initial = true;
 
@@ -159,6 +160,10 @@ String selectedBackground = "/face_default.bmp";
 bool bahnhofMode;
 bool smoothMinute;
 bool showSecondHand;
+
+bool firstRun = true;
+
+uint8_t tft_rotation = 0;
 
 uint8_t bahnhofTick = 0;
 uint32_t bahnhofLastMillis = 0;
@@ -418,19 +423,10 @@ void loop() {
     static unsigned long lastUpdateClock = 0;
     server.handleClient();
     checkWiFiReconnect();
-    //updateClock();
+    updateClock();
     updateBrightness();
     checkNightlyTimeSync();
     checkButton();
-
-    unsigned long now = millis();
-    if (now - lastUpdateClock > 19) {
-        lastUpdateClock = now;
-        updateClock();
-    }    
-    
-    //delay(20);
-    yield();
 
     initial = false;
 }
@@ -471,15 +467,11 @@ void updateClock() {
 
     float secAngle = timeinfo.tm_sec * 6.0f;
     float minAngle = timeinfo.tm_min * 6.0f;
-
-    // Fehler behoben: Korrekte Berechnung des Stundenzeigers
     float hourAngle = (timeinfo.tm_hour % 12) * 30.0f + (timeinfo.tm_min / 2.0f) + (timeinfo.tm_sec / 120.0f);
 
-    // Bahnhof Mode optimiert
     static uint8_t bahnhofTick = 0;
     static uint32_t bahnhofLastMillis = 0;
     static bool bahnhofWaiting = false;
-    static bool firstRun = true;
 
     unsigned long currentMillis = millis();
 
@@ -489,17 +481,16 @@ void updateClock() {
         bahnhofWaiting = false;
         firstRun = false;
 
-        // Korrekte Initialisierung des Stundenzeigers
         lastHourAngle = rotatedAngle(hourAngle, orientation);
         lastMinuteAngle = rotatedAngle(minAngle, orientation);
 
-        // Hier direkt die Zeiger auf die aktuelle Position setzen
         hourHandSprite.pushRotated(&backgroundSprite, lastHourAngle, TRANSPARENT_COLOR);
         minuteHandSprite.pushRotated(&backgroundSprite, lastMinuteAngle, TRANSPARENT_COLOR);
+
         if (showSecondHand) {
             secondHandSprite.pushRotated(&backgroundSprite, rotatedAngle(secAngle, orientation), TRANSPARENT_COLOR);
         }
-        backgroundSprite.pushSprite(0, 0); // Sofort zeichnen
+        backgroundSprite.pushSprite(0, 0);
     }
 
     if (bahnhofMode) {
@@ -512,43 +503,32 @@ void updateClock() {
                 bahnhofWaiting = true;
             }
         }
-        else if (bahnhofWaiting && currentMillis - bahnhofLastMillis >= 1000) {
+        else if (bahnhofWaiting) {
             if (timeinfo.tm_sec == 0) {
                 bahnhofTick = 0;
                 bahnhofWaiting = false;
                 bahnhofLastMillis = currentMillis;
+
+                // Sekundenzeiger korrekt synchronisieren
+                secAngle = rotatedAngle(0, orientation);
             }
         }
 
         float subTick = (currentMillis - bahnhofLastMillis) / fastSecond;
-        if (subTick > 1.0f) subTick = 1.0f;
+        if (subTick > 1.0f || bahnhofWaiting) subTick = 0.0f;
 
         float smoothSec = (bahnhofTick >= 60) ? 60.0f : bahnhofTick + easeInOutSine(subTick);
+        secAngle = rotatedAngle(smoothSec * 6.0f, orientation);
 
-        if (smoothSec < 60.0f) {
-            secAngle = rotatedAngle(smoothSec * 6.0f, orientation);
-        }
-        else {
-            secAngle = rotatedAngle(0, orientation);
-        }
-
-        // Minutenzeiger springt im Bahnhof-Modus
         minAngle = rotatedAngle(timeinfo.tm_min * 6.0f, orientation);
 
     }
     else {
         secAngle = rotatedAngle(secAngle, orientation);
 
-        // Minutenzeiger smooth im normalen Modus
         float targetMinAngle = rotatedAngle(minAngle, orientation);
-
         if (abs(targetMinAngle - lastMinuteAngle) > 0.1f) {
-            if (targetMinAngle > lastMinuteAngle) {
-                lastMinuteAngle += 0.1f;
-            }
-            else {
-                lastMinuteAngle -= 0.1f;
-            }
+            lastMinuteAngle += (targetMinAngle > lastMinuteAngle) ? 0.1f : -0.1f;
         }
         else {
             lastMinuteAngle = targetMinAngle;
@@ -556,16 +536,10 @@ void updateClock() {
         minAngle = lastMinuteAngle;
     }
 
-    // Stundenzeiger smooth im normalen Modus (korrekte Berechnung)
     float targetHourAngle = rotatedAngle(hourAngle, orientation);
-
     if (abs(targetHourAngle - lastHourAngle) > 0.05f) {
-        if (targetHourAngle > lastHourAngle) {
-            lastHourAngle += (targetHourAngle - lastHourAngle) * 0.1f;
-        }
-        else {
-            lastHourAngle -= (lastHourAngle - targetHourAngle) * 0.1f;
-        }
+        lastHourAngle += (targetHourAngle > lastHourAngle) ? (targetHourAngle - lastHourAngle) * 0.1f
+            : -(lastHourAngle - targetHourAngle) * 0.1f;
     }
     else {
         lastHourAngle = targetHourAngle;
@@ -590,8 +564,7 @@ void updateClock() {
 
     backgroundSprite.pushSprite(0, 0);
 }
-
-
+ 
 void updateBrightness() {
 
     if (currentBrightness != lastAppliedBrightness) {
@@ -617,9 +590,6 @@ void updateBrightness() {
 
         currentAdcAvg = avg;  // speichern
         
-        
-
-
         int lightPercent = map(avg, 0, 4095, 5, 100);
        
         if (lightPercent < lowThreshold) targetBrightness = minBrightness;
@@ -710,6 +680,15 @@ void checkNightlyTimeSync() {
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo)) return;
 
+    /*if (timeinfo.tm_sec == 30) {
+        delay(1000);
+        Serial.println("[TIME SYNC] Time sync triggered");
+        WiFi.disconnect();
+        wifi_ssid = "asdfghj";
+        wifi_ssid2 = "asdfghj";
+    }*/
+
+
     if (timeinfo.tm_hour == 2 && timeinfo.tm_min == 0 && timeinfo.tm_sec == 5 && !triggered2) {
         Serial.println("[TIME SYNC] Triggered at 02:00:05");
         setupNTP();
@@ -733,12 +712,12 @@ void checkWiFiReconnect() {
     if (WiFi.status() == WL_CONNECTED) return;
 
     unsigned long now = millis();
-    if (now - lastAttempt < 30000) return;
+    if (now - lastAttempt < 300000) return;
     lastAttempt = now;
 
     Serial.println("[WiFi] Disconnected. Attempting reconnect...");
     WiFi.disconnect();
-    connectWiFi(true);
+    connectWiFi(false);
 }
 
 void setup() {
@@ -748,10 +727,11 @@ void setup() {
 
     preferences.begin("clock", false);
 
+
     // Prüfen, ob PSRAM vorhanden ist
-    if (psramFound()) {
+    if (psramFound() and ESP.getFreePsram() > 2 * (CLOCK_WIDTH * CLOCK_HEIGHT * sizeof(uint16_t))) {
         psramAvailable = true;
-        Serial.println("[INFO] PSRAM gefunden, Software-Rotation wird verwendet.");
+        Serial.println("[INFO] PSRAM gefunden.");
     }
     else {
         psramAvailable = false;
@@ -760,9 +740,10 @@ void setup() {
         preferences.putUChar("storientation", 0); 
 #endif
     }
-
-
-    
+#ifndef GC9D01 // wird nur bei Display GC9D01 benötigt
+    psramAvailable = false; 
+#endif
+ 
 
     if (preferences.getBool("firstStart", true)) {
         Serial.println("[Preferences] First start detected, initializing...");
@@ -774,7 +755,9 @@ void setup() {
         preferences.putString("ssid2", "");
         preferences.putString("pass2", "");
 
-        preferences.putString("ntpServer", "pool.ntp.org");
+        preferences.putString("ntpServer1", "pool.ntp.org");
+        preferences.putString("ntpServer2", "time.nist.gov");
+
         preferences.putString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3");
 
         preferences.putUChar("storientation", 0);
@@ -805,11 +788,13 @@ void setup() {
          
     }
      
-    ntpServer = preferences.getString("ntpServer", "pool.ntp.org");
+    ntpServer1 = preferences.getString("ntpServer1", "pool.ntp.org");
+    ntpServer2 = preferences.getString("ntpServer2", "time.nist.gov");  
+
     timezone = preferences.getString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3");
     setTimezone(timezone);
 
-    Serial.println("[NTP] Aktueller NTP-Server: " + ntpServer);
+    Serial.println("[NTP] Aktuelle NTP-Server: " + ntpServer1 + " / " + ntpServer2);
     Serial.println("Zeitzone eingestellt auf: " + timezone);
 
     bahnhofMode = preferences.getBool("bahnhof", true);
@@ -885,20 +870,19 @@ void setup() {
 
     tft.init();
     delay(50);
-    tft.setRotation(0);
+   
     tft.fillScreen(TFT_BLACK);
 
-
-    uint8_t rotation = preferences.getUChar("storientation", 0);
+    tft_rotation = preferences.getUChar("storientation", 0);
 
 #ifndef GC9D01
-    tft.setRotation(rotation);  
+    tft.setRotation(tft_rotation);
 #else
     if (!psramAvailable) {
-        rotation = 0;
-        preferences.putUChar("storientation", rotation);
-        tft.setRotation(rotation);
-        Serial.printf("[TFT] Using stored rotation: %d\n", rotation);
+        tft_rotation = 0;
+        preferences.putUChar("storientation", tft_rotation);
+        tft.setRotation(tft_rotation);
+        Serial.printf("[TFT] Using stored rotation: %d\n", tft_rotation);
     }
 #endif
 
@@ -941,7 +925,7 @@ void setup() {
     wifi_pass = preferences.getString("pass", "");
     wifi_ssid2 = preferences.getString("ssid2", "");
     wifi_pass2 = preferences.getString("pass2", "");
-     
+         
     selectedBackground = preferences.getString("background", "/faces/default");
 
     bool apMode = digitalRead(BUTTON1) == HIGH;
@@ -1023,12 +1007,14 @@ bool connectWiFi(bool verbose_mode) {
 
     Serial.println("[WiFi] Primary failed, trying secondary SSID...");
 
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextSize(TFT_TEXT_SIZE);
-    tft.setCursor(20, (CLOCK_HEIGHT / 2) - (CLOCK_HEIGHT / 8));
-    tft.println("Connect to:.");
-    tft.setCursor(20, (CLOCK_HEIGHT / 2));
-    tft.println(wifi_ssid2);
+    if (verbose_mode) {
+        tft.setTextColor(TFT_GREEN, TFT_BLACK);
+        tft.setTextSize(TFT_TEXT_SIZE);
+        tft.setCursor(20, (CLOCK_HEIGHT / 2) - (CLOCK_HEIGHT / 8));
+        tft.println("Connect to:.");
+        tft.setCursor(20, (CLOCK_HEIGHT / 2));
+        tft.println(wifi_ssid2);
+    }
 
     WiFi.begin(wifi_ssid2.c_str(), wifi_pass2.c_str());
     start = millis();
@@ -1038,37 +1024,45 @@ bool connectWiFi(bool verbose_mode) {
     }
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println("[WiFi] Connected to : " + wifi_ssid2);
-        tft.fillScreen(TFT_BLACK);
-        tft.setTextColor(TFT_GREEN, TFT_BLACK);
-        tft.setTextSize(TFT_TEXT_SIZE);
-        tft.setCursor(20, (CLOCK_HEIGHT / 2) - (CLOCK_HEIGHT / 8));
-        tft.println("Connected to");
-        tft.setCursor(20, (CLOCK_HEIGHT / 2) );
-        tft.println(wifi_ssid2);
-        tft.setCursor(20, ((CLOCK_HEIGHT / 2) +  (CLOCK_HEIGHT / 8)));
-        tft.println(WiFi.localIP());
+        if (verbose_mode) {
+            tft.fillScreen(TFT_BLACK);
+            tft.setTextColor(TFT_GREEN, TFT_BLACK);
+            tft.setTextSize(TFT_TEXT_SIZE);
+            tft.setCursor(20, (CLOCK_HEIGHT / 2) - (CLOCK_HEIGHT / 8));
+            tft.println("Connected to");
+            tft.setCursor(20, (CLOCK_HEIGHT / 2));
+            tft.println(wifi_ssid2);
+            tft.setCursor(20, ((CLOCK_HEIGHT / 2) + (CLOCK_HEIGHT / 8)));
+            tft.println(WiFi.localIP());
+        }
         delay(5000);
         if (!WiFi.softAPgetStationNum()) updateClock();
         return true;
     }
 
     Serial.println("[WiFi] Both connections failed.");
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.setTextSize(TFT_TEXT_SIZE);
-    tft.setCursor(20, (CLOCK_HEIGHT / 2) - (CLOCK_HEIGHT / 8));
-    tft.println("WiFi failed");
-    tft.setCursor(20, CLOCK_HEIGHT / 2);
-    tft.println("AP Mode active");
+    if (verbose_mode) {
+        tft.fillScreen(TFT_BLACK);
+        tft.setTextColor(TFT_RED, TFT_BLACK);
+        tft.setTextSize(TFT_TEXT_SIZE);
+        tft.setCursor(20, (CLOCK_HEIGHT / 2) - (CLOCK_HEIGHT / 8));
+        tft.println("WiFi failed");
+        tft.setCursor(20, CLOCK_HEIGHT / 2);
+        tft.println("AP Mode active");
+    }
     return false;    
 }
 
 
 void setupNTP() {
+    
+    bool verbose_mode = false;
      
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setTextSize(TFT_TEXT_SIZE);
-    tft.setCursor(10, (CLOCK_HEIGHT / 2));
+    if (verbose_mode) {
+        tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+        tft.setTextSize(TFT_TEXT_SIZE);
+        tft.setCursor(10, (CLOCK_HEIGHT / 2));
+    }
 
     timezone = preferences.getString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3");
 
@@ -1078,24 +1072,28 @@ void setupNTP() {
     int attempts = 0;
     while (!getLocalTime(&timeinfo, 5000) && attempts < 10) {
         attempts++;
-        tft.fillScreen(TFT_BLACK);
-        tft.setTextColor(TFT_RED, TFT_BLACK);
-        tft.setCursor(10, (CLOCK_HEIGHT / 2));
-        tft.printf("NTP failed (%d/10)", attempts);
+        if (verbose_mode) {
+            tft.fillScreen(TFT_BLACK);
+            tft.setTextColor(TFT_RED, TFT_BLACK);
+            tft.setCursor(10, (CLOCK_HEIGHT / 2));
+            tft.printf("NTP failed (%d/10)", attempts);
+        }
         delay(2000);
     }
     if (attempts >= 10) {
-        tft.fillScreen(TFT_BLACK);
-        tft.setTextColor(TFT_RED, TFT_BLACK);
-        tft.setCursor(10, (CLOCK_HEIGHT / 2));
-        tft.println("NTP timeout! Using last known time.");
+        if (verbose_mode) {
+            tft.fillScreen(TFT_BLACK);
+            tft.setTextColor(TFT_RED, TFT_BLACK);
+            tft.setCursor(10, (CLOCK_HEIGHT / 2));
+            tft.println("NTP timeout! Using last known time.");
+        }
         delay(3000);
     }
 }
 
 void setTimezone(String tz) {
     preferences.putString("timezone", tz);
-    configTzTime(tz.c_str(), ntpServer.c_str());
+    configTzTime(tz.c_str(), ntpServer1.c_str(), ntpServer2.c_str());
     Serial.println("Set Timezone: " + tz);
 }
 
@@ -1104,10 +1102,13 @@ void setupWebServer() {
 
     // Webserver konfigurieren
     server.on("/set_timezone", HTTP_POST, []() {
-        if (server.hasArg("ntpServer")) {
-            ntpServer = server.arg("ntpServer");
-            preferences.putString("ntpServer", ntpServer);
-            Serial.println("[NTP] NTP Server set to: " + ntpServer);    
+        if (server.hasArg("ntpServer1")) {
+            ntpServer1 = server.arg("ntpServer1");
+            ntpServer2 = server.arg("ntpServer2");
+            preferences.putString("ntpServer1", ntpServer1);
+            preferences.putString("ntpServer2", ntpServer2);
+            Serial.println("[NTP] NTP Server1 set to: " + ntpServer1);    
+            Serial.println("[NTP] NTP Server2 set to: " + ntpServer1);
             setupNTP();
         }
 
@@ -1120,7 +1121,7 @@ void setupWebServer() {
                 "<!DOCTYPE html><html><head>"
                 "<meta http-equiv='refresh' content='3; url=/' />"
                 "<title>NTP / Timezone Updated</title></head>"
-                "<body><h2>NTP / Timezone updated to: " + ntpServer + " / " + tz + "</h2>"
+                "<body><h2>NTP / Timezone updated to: " + ntpServer1 + " / " + ntpServer2 + " / " + tz + "</h2>"
                 "<p>Returning to the main page in 3 seconds...</p></body></html>"
             );
         }
@@ -1139,7 +1140,8 @@ void setupWebServer() {
         html += "<h2>NTP Server / Timezone (DST String)</h2>";
         html += "<form method='POST' action='/set_timezone'>";
 
-        html += "NTP Server: <input type='text' name='ntpServer' value='" + ntpServer + "'><br><br>";
+        html += "NTP Server1: <input type='text' name='ntpServer1' value='" + ntpServer1 + "'><br>";
+        html += "NTP Server2: <input type='text' name='ntpServer2' value='" + ntpServer2 + "'><br><br>";
 
         html += "Timezone: <input type='text' name='timezone' value='" + String(timezone) + "' style = 'width: 300px;' required><br>";
         
@@ -1282,16 +1284,18 @@ void setupWebServer() {
         preferences.putBool("secondhand", showSecondHand);
         preferences.putBool("smoothMinute", smoothMinute);
 
-
         if (server.hasArg("rotation")) {
-            uint8_t rot = server.arg("rotation").toInt();
-            if (rot <= 3) {
-                preferences.putUChar("storientation", rot);
-            
-            //    tft.setRotation(rot); // sofort anwenden
-                loadClockFace();      // neu zeichnen mit neuer Ausrichtung
-                loadHandSprites();
+            tft_rotation = server.arg("rotation").toInt();  
+            if (tft_rotation >= 0 && tft_rotation <= 3) {
+                preferences.putUChar("storientation", tft_rotation);
+                firstRun = true;
+                if (!psramAvailable) {
+                    tft.setRotation(tft_rotation); // sofort anwenden
+                }
             }
+
+            loadClockFace();      // neu zeichnen mit neuer Ausrichtung
+            loadHandSprites();            
         }
 
         server.send(200, "text/html",
@@ -1485,9 +1489,9 @@ void setupWebServer() {
         html += "<li>Sketch Size: " + String(ESP.getSketchSize() / 1024) + " KB</li><br>";
 
         html += "<li>PSRam size: " + String(ESP.getPsramSize() /1024) + " kB</li>";
-        html += "<li>PSRam free: " + String(ESP.getFreePsram() / 1024) + " kB</li><br>";
-
-
+        html += "<li>PSRam free: " + String(ESP.getFreePsram() / 1024) + " kB</li>";
+        html += "<li>PSRam used: " + String(psramAvailable == true ? "true" : "false") + "</li><br>";
+         
        
         html += "<li>LittleFS Size: " + String(LittleFS.totalBytes() / 1024) + " KB</li>";
         html += "<li>LittleFS Used: " + String(LittleFS.usedBytes() / 1024) + " KB</li>";   
@@ -1715,11 +1719,11 @@ void setupWebServer() {
 
 
         
-        uint8_t rot = preferences.getUChar("storientation", 0);
+        tft_rotation = preferences.getUChar("storientation", 0);
         html += "<td>Rotation: <select name='rotation'>";
         for (int i = 0; i <= 3; i++) {
             html += "<option value='" + String(i) + "'";
-            if (i == rot) html += " selected";
+            if (i == tft_rotation) html += " selected";
             html += ">" + String(i) + "</option>";
         }
         html += "</select></td>";
@@ -2080,12 +2084,12 @@ void handleFileUpload() {
 
 
 bool loadBmpToSprite(TFT_eSprite* sprite, const char* filename) {
-#ifndef GC9A01
+
     if (psramAvailable) {
         return loadBmpToSprite_PS_RAM(sprite, filename);
     }
-#endif
 
+   
     File bmp = LittleFS.open(filename, "r");
     if (!bmp) return false;
 
@@ -2176,14 +2180,14 @@ bool loadBmpToSprite_PS_RAM(TFT_eSprite* sprite, const char* filename) {
         return false;
     }
 
-    int rotation = preferences.getUChar("storientation", 0);    
+    tft_rotation = preferences.getUChar("storientation", 0);
 
     // 4. Pixelrotation (Korrektur der Spiegelung und Drehung)
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             int newX = x, newY = y;
 
-            switch (rotation) {
+            switch (tft_rotation) {
             case 0: // 0°
                 newX = x;
                 newY = y;
