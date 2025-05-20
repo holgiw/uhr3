@@ -16,8 +16,8 @@
 #define ESP32_S2
 
 // TFT
-#define GC9A01
-//#define GC9D01
+//#define GC9A01
+#define GC9D01
 //#define ILI9341 
 
 
@@ -596,6 +596,18 @@ void updateBrightness() {
 
         else if (lightPercent > highThreshold) targetBrightness = maxBrightness;
 
+#ifdef TFT_Backlight
+        else {
+            float norm = constrain((float)avg / 4095.0f, 0.0f, 1.0f);
+            // Gamma < 1 macht das Display im unteren Bereich dunkler, z.B. 0.4
+            float gamma = 0.9f;
+            float gammaNorm = powf(norm, gamma);
+            targetBrightness = minBrightness + (uint8_t)((maxBrightness - minBrightness) * gammaNorm + 0.5f);
+          //  Serial.printf("[ADC] lightPercent: %d, targetBrightness: %d\n", lightPercent, targetBrightness);
+            
+        }  
+#endif
+
         currentLightPercent = lightPercent;
 
         if (initial) currentBrightness = targetBrightness;
@@ -799,6 +811,11 @@ void setup() {
 
     bahnhofMode = preferences.getBool("bahnhof", true);
     smoothMinute = preferences.getBool("smoothMinute", false);
+
+    lowThreshold = preferences.getInt("lowThreshold", 40);
+    highThreshold = preferences.getInt("highThreshold", 60);    
+    minBrightness = preferences.getUChar("minBrightness", 100);
+    maxBrightness = preferences.getUChar("maxBrightness", 255); 
        
 
     pinMode(BUTTON1, INPUT_PULLDOWN);
