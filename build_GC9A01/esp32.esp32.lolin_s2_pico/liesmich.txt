@@ -1,5 +1,8 @@
 Flashen des ESP unter Windows:
-ESP32-S2 am PC per USB anstecken
+ESP32-S2 am PC per USB anstecken.
+Danach muss der ESP in den Bootmodus gebracht werden:
+Reset drücken und halten, Boot drücken und halten, Reset loslassen, danach Boot loslassen.
+Am PC sollte jetzt die COM Schnittstelle des ESP auftauchen.
 In der Batch Datei start.bat muss die serielle COM Schnittstelle angepasst und gespeichert werden (derzeit ist COM3 eingestellt).
 Danach ist die start.bat auszuführen und flasht den ESP32 S2.
 Das muss im DOS Fenster im ausgepackten Verzeichnis erfolgen.

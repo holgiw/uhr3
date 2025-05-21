@@ -9,14 +9,13 @@
 // Partition: Default 4MB NO OTA, 2MB, 2MB
 // TFT_eSPI: 2.5.34
 
-
-
 // Prozessor
 //#define ESP32_D1 // -- funktioniert nicht !!!! SPI & LittleFs ???
 #define ESP32_S2
 
 // TFT
 //#define GC9A01
+//#define GC9A01_WITH_BACKLIGHT
 #define GC9D01
 //#define ILI9341 
 
@@ -83,7 +82,7 @@ Preferences preferences;
 
 #define BUTTON1 16
 
-#ifdef GC9D01
+#if defined (GC9D01)  || defined(GC9A01_WITH_BACKLIGHT)  
 #define TFT_Backlight 3  // Backlight
 #define BACKLIGHT_CHANNEL 0  // PWM channel
 #define BACKLIGHT_FREQ 5000
@@ -165,9 +164,6 @@ bool firstRun = true;
 
 uint8_t tft_rotation = 0;
 
-uint8_t bahnhofTick = 0;
-uint32_t bahnhofLastMillis = 0;
-bool bahnhofWaiting = false;
 float fastSecond = 972.0f;// 966.0f;
 
 uint16_t rowBuffer[CLOCK_WIDTH];
