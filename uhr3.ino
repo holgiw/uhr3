@@ -1,5 +1,5 @@
 // howl@gmx.de
-// Bahnhofsuhr 05/2025
+// stationsuhr 05/2025
 // 
 // https://github.com/holgiw/uhr3
 // 
@@ -15,8 +15,8 @@
 
 // TFT
 //#define GC9A01
-//#define GC9A01_WITH_BACKLIGHT
-#define GC9D01
+#define GC9A01_WITH_BACKLIGHT
+//#define GC9D01
 //#define ILI9341 
 
 
@@ -30,6 +30,7 @@
 #include <time.h>
 #include <set>
 #include <base64.h>
+#include "nvs_flash.h"
 
 #include "build_defs.h"
 
@@ -91,7 +92,7 @@ Preferences preferences;
     
 #endif
 
-#ifdef GC9A01
+#if defined GC9A01 || defined(GC9A01_WITH_BACKLIGHT) 
 #include "graphic/240/clock_default.h"
 
 #define TFT_WIDTH 240
@@ -138,6 +139,8 @@ Preferences preferences;
 
 #define TRANSPARENT_COLOR 0x0120
 
+String tft_type = "UNKNOWN";
+
 TFT_eSprite backgroundSprite = TFT_eSprite(&tft);
 TFT_eSprite hourHandSprite = TFT_eSprite(&tft);
 TFT_eSprite minuteHandSprite = TFT_eSprite(&tft);
@@ -156,7 +159,7 @@ bool initial = true;
 
 String selectedBackground = "/face_default.bmp";
 
-bool bahnhofMode;
+bool stationMode;
 bool smoothMinute;
 bool showSecondHand;
 
@@ -233,15 +236,16 @@ uint16_t setPixelBrightness(uint16_t pixel) {
 /// Lädt das Zifferblatt, indem entweder ein benutzerdefinierter Hintergrund oder ein Standardhintergrund verwendet wird.           
 /// </summary>  
 void loadClockFace() {
+    if (!selectedBackground.startsWith("/")) selectedBackground = "/" + selectedBackground;
     if (LittleFS.exists(selectedBackground)) {
         File bmp = LittleFS.open(selectedBackground, "r");
         if (bmp) {
             loadBmpToSprite(&backgroundSprite, selectedBackground.c_str());
             bmp.close();
-          //  Serial.println("[BG] Custom background loaded: " + selectedBackground);
+            //Serial.println("[BG] Custom background loaded: " + selectedBackground);
         }
         else {
-          //  Serial.println("[BG] Failed to open custom background.");
+            Serial.println("[BG] Failed to open custom background.");
             for (int y = 0; y < CLOCK_WIDTH; y++) {
 
                 for (int x = 0; x < CLOCK_WIDTH; x++) {
@@ -255,7 +259,7 @@ void loadClockFace() {
         }
     }
     else {
-      //  Serial.println("[BG] Background not found, using default.");
+        //Serial.println("[BG] Background not found, using default.");
         for (int y = 0; y < CLOCK_WIDTH; y++) {
 
             for (int x = 0; x < CLOCK_WIDTH; x++) {
@@ -266,7 +270,7 @@ void loadClockFace() {
             }
             backgroundSprite.pushImage(0, y, CLOCK_WIDTH, 1, rowBuffer);
         }
-     //   Serial.println("[BG] Default background loaded.");
+        //Serial.println("[BG] Default background loaded.");
     }
 
 }
@@ -418,38 +422,71 @@ bool loadHandBmp(TFT_eSprite* sprite, const char* filename, int width, int heigh
 void loop() {
     static unsigned long lastUpdateClock = 0;
     server.handleClient();
-    checkWiFiReconnect();
-    updateClock();
-    updateBrightness();
-    checkNightlyTimeSync();
-    checkButton();
+    
+    if (WiFi.getMode() == WIFI_STA) {
+        checkWiFiReconnect();
+        updateClock();
+        updateBrightness();
+        checkNightlyTimeSync();  
+        initial = false;
+    }
 
-    initial = false;
+    checkButton();    
 }
 
 void checkButton() {
-    static unsigned long lastPress = 0;
     if (digitalRead(BUTTON1) == HIGH) {
-        unsigned long now = millis();
-        if (now - lastPress > 500) {
-            lastPress = now;
-            Serial.println("[BUTTON] Button pressed");
-            tft.fillScreen(TFT_BLACK);
-            tft.setTextColor(TFT_GREEN, TFT_BLACK);
-            tft.setTextSize(TFT_TEXT_SIZE);
-            tft.setCursor(20, (CLOCK_HEIGHT / 2) - (CLOCK_HEIGHT / 8));
-            tft.println("Connected to:");
-            tft.setCursor(20, (CLOCK_HEIGHT / 2));
-            tft.println(wifi_ssid);
-            tft.setCursor(20, (CLOCK_HEIGHT / 2) + (CLOCK_HEIGHT / 8));
-            tft.println(WiFi.localIP());
 
-            while (digitalRead(BUTTON1) == HIGH) {
-                delay(10);
-            }   
-            
+        uint8_t secs = 5;
+        unsigned long pressStart = millis();
+
+        // Einmalig Anzeige zeichnen
+        tft.fillScreen(TFT_BLACK);
+        tft.setTextColor(TFT_GREEN, TFT_BLACK);
+        tft.setTextSize(TFT_TEXT_SIZE);
+        tft.setCursor(20, (CLOCK_HEIGHT / 2) - (CLOCK_HEIGHT / 8));
+        tft.println("Connected to:");
+        tft.setCursor(20, (CLOCK_HEIGHT / 2));
+        tft.println(wifi_ssid);
+        tft.setCursor(20, (CLOCK_HEIGHT / 2) + (CLOCK_HEIGHT / 8));
+        tft.println(WiFi.localIP());
+
+        // Blockierender Loop während Button gedrückt
+        while (digitalRead(BUTTON1) == HIGH) {
+            if (millis() - pressStart > 10000 && millis() - pressStart < 15000) {
+                tft.fillScreen(TFT_RED);
+                tft.setTextColor(TFT_WHITE, TFT_RED);
+                tft.setTextSize(TFT_TEXT_SIZE);
+                tft.setCursor(20, CLOCK_HEIGHT / 2);
+                tft.printf("Reset in %d secs", secs);
+                delay(1000);
+                if (secs>0) secs--;
+            }
+
+            if (millis() - pressStart > 15000) {
+                // 10 Sekunden überschritten → Factory Reset
+                tft.fillScreen(TFT_RED);
+                tft.setTextColor(TFT_WHITE, TFT_RED);
+                tft.setTextSize(TFT_TEXT_SIZE);
+                tft.setCursor(20, CLOCK_HEIGHT / 2);
+                tft.println("Factory Reset...");
+                delay(1000);
+                factoryReset(); // wird typischerweise ESP.restart() aufrufen
+                return; // Falls kein automatischer Neustart
+            }
+            delay(10); // Entprellung
         }
+
+        // Button wurde vor 10 Sek. losgelassen → nur Anzeige bleibt sichtbar
+        delay(500); // optional: kurze Pause für Lesbarkeit
     }
+}
+
+
+
+float shortestAngleDiff(float from, float to) {
+    float diff = fmodf(to - from + 540.0f, 360.0f) - 180.0f;
+    return diff;
 }
 
 static float lastHourAngle = 0.0f;
@@ -459,22 +496,22 @@ void updateClock() {
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo)) return;
 
-    int orientation = preferences.getUChar("storientation", 0);
+    int orientation = preferences.getUChar("tft_rotation", 0);
 
     float secAngle = timeinfo.tm_sec * 6.0f;
     float minAngle = timeinfo.tm_min * 6.0f;
     float hourAngle = (timeinfo.tm_hour % 12) * 30.0f + (timeinfo.tm_min / 2.0f) + (timeinfo.tm_sec / 120.0f);
 
-    static uint8_t bahnhofTick = 0;
-    static uint32_t bahnhofLastMillis = 0;
-    static bool bahnhofWaiting = false;
+    static uint8_t stationTick = 0;
+    static uint32_t stationLastMillis = 0;
+    static bool stationWaiting = false;
 
     unsigned long currentMillis = millis();
 
     if (firstRun) {
-        bahnhofTick = timeinfo.tm_sec;
-        bahnhofLastMillis = millis();
-        bahnhofWaiting = false;
+        stationTick = timeinfo.tm_sec;
+        stationLastMillis = millis();
+        stationWaiting = false;
         firstRun = false;
 
         lastHourAngle = rotatedAngle(hourAngle, orientation);
@@ -489,31 +526,31 @@ void updateClock() {
         backgroundSprite.pushSprite(0, 0);
     }
 
-    if (bahnhofMode) {
-        if (!bahnhofWaiting && currentMillis - bahnhofLastMillis >= fastSecond) {
-            bahnhofTick++;
-            bahnhofLastMillis += fastSecond;
+    if (stationMode) {
+        if (!stationWaiting && currentMillis - stationLastMillis >= fastSecond) {
+            stationTick++;
+            stationLastMillis += fastSecond;
 
-            if (bahnhofTick >= 60) {
-                bahnhofTick = 60;
-                bahnhofWaiting = true;
+            if (stationTick >= 60) {
+                stationTick = 60;
+                stationWaiting = true;
             }
         }
-        else if (bahnhofWaiting) {
+        else if (stationWaiting) {
             if (timeinfo.tm_sec == 0) {
-                bahnhofTick = 0;
-                bahnhofWaiting = false;
-                bahnhofLastMillis = currentMillis;
+                stationTick = 0;
+                stationWaiting = false;
+                stationLastMillis = currentMillis;
 
                 // Sekundenzeiger korrekt synchronisieren
                 secAngle = rotatedAngle(0, orientation);
             }
         }
 
-        float subTick = (currentMillis - bahnhofLastMillis) / fastSecond;
-        if (subTick > 1.0f || bahnhofWaiting) subTick = 0.0f;
+        float subTick = (currentMillis - stationLastMillis) / fastSecond;
+        if (subTick > 1.0f || stationWaiting) subTick = 0.0f;
 
-        float smoothSec = (bahnhofTick >= 60) ? 60.0f : bahnhofTick + easeInOutSine(subTick);
+        float smoothSec = (stationTick >= 60) ? 60.0f : stationTick + easeInOutSine(subTick);
         secAngle = rotatedAngle(smoothSec * 6.0f, orientation);
 
         minAngle = rotatedAngle(timeinfo.tm_min * 6.0f, orientation);
@@ -521,26 +558,51 @@ void updateClock() {
     }
     else {
         secAngle = rotatedAngle(secAngle, orientation);
+          
+        smoothMinute = preferences.getBool("smoothMinute", false);
 
-        float targetMinAngle = rotatedAngle(minAngle, orientation);
-        if (abs(targetMinAngle - lastMinuteAngle) > 0.1f) {
-            lastMinuteAngle += (targetMinAngle > lastMinuteAngle) ? 0.1f : -0.1f;
+        if (smoothMinute) {
+            // Millisekunden einbeziehen
+            unsigned long currentMillis = millis();
+            int milliseconds = currentMillis % 1000;
+            float smoothMinuteValue = timeinfo.tm_min + (timeinfo.tm_sec / 60.0f) + (milliseconds / 60000.0f);
+
+            float rawMinAngle = smoothMinuteValue * 6.0f;
+            float targetMinAngle = rotatedAngle(rawMinAngle, orientation);
+            float angleDiff = shortestAngleDiff(lastMinuteAngle, targetMinAngle);
+
+            lastMinuteAngle += angleDiff * 0.02f;  // noch feinere Bewegung
         }
         else {
-            lastMinuteAngle = targetMinAngle;
+            // Normale Minutenanzeige mit sanfter Korrektur bei Wechsel
+            float rawMinAngle = timeinfo.tm_min * 6.0f;
+            float targetMinAngle = rotatedAngle(rawMinAngle, orientation);
+            float angleDiff = shortestAngleDiff(lastMinuteAngle, targetMinAngle);
+
+            if (fabs(angleDiff) > 0.1f) {
+                lastMinuteAngle += angleDiff * 0.1f;
+            }
+            else {
+                lastMinuteAngle = targetMinAngle;
+            }
         }
+
         minAngle = lastMinuteAngle;
     }
+         
+    
 
     float targetHourAngle = rotatedAngle(hourAngle, orientation);
-    if (abs(targetHourAngle - lastHourAngle) > 0.05f) {
-        lastHourAngle += (targetHourAngle > lastHourAngle) ? (targetHourAngle - lastHourAngle) * 0.1f
-            : -(lastHourAngle - targetHourAngle) * 0.1f;
+    float hourAngleDiff = shortestAngleDiff(lastHourAngle, targetHourAngle);
+
+    if (fabs(hourAngleDiff) > 0.05f) {
+        lastHourAngle += hourAngleDiff * 0.1f;  // Glättungsfaktor
     }
     else {
         lastHourAngle = targetHourAngle;
     }
     hourAngle = lastHourAngle;
+
 
     loadClockFace();
 
@@ -596,7 +658,7 @@ void updateBrightness() {
         else {
             float norm = constrain((float)avg / 4095.0f, 0.0f, 1.0f);
             // Gamma < 1 macht das Display im unteren Bereich dunkler, z.B. 0.4
-            float gamma = 0.9f;
+            float gamma = 0.2f;
             float gammaNorm = powf(norm, gamma);
             targetBrightness = minBrightness + (uint8_t)((maxBrightness - minBrightness) * gammaNorm + 0.5f);
           //  Serial.printf("[ADC] lightPercent: %d, targetBrightness: %d\n", lightPercent, targetBrightness);
@@ -651,32 +713,41 @@ String encodeBmpToBase64(const uint16_t* data, int width, int height) {
     const int fileSize = headerSize + dataSize;
 
     uint8_t* bmpData = new uint8_t[fileSize];
+    if (!bmpData) return "";
+
     memset(bmpData, 0, fileSize);
 
+    // BMP Header
     bmpData[0] = 'B'; bmpData[1] = 'M';
     *(uint32_t*)&bmpData[2] = fileSize;
     *(uint32_t*)&bmpData[10] = headerSize;
     *(uint32_t*)&bmpData[14] = 40;
     *(int32_t*)&bmpData[18] = width;
-    *(int32_t*)&bmpData[22] = -height;
+    *(int32_t*)&bmpData[22] = -height; // Top-down BMP
     *(uint16_t*)&bmpData[26] = 1;
     *(uint16_t*)&bmpData[28] = 16;
     *(uint32_t*)&bmpData[34] = dataSize;
 
+    // Pixel-Daten (RGB565 → BMP raw)
     for (int y = 0; y < height; y++) {
         uint8_t* rowPtr = bmpData + headerSize + y * rowSize;
         for (int x = 0; x < width; x++) {
             uint16_t px = data[y * width + x];
-            if (px == TRANSPARENT_COLOR) px = 0xFFFF; // transparent → weiß für Vorschau
-            ((uint16_t*)rowPtr)[x] = px;
+            if (px == TRANSPARENT_COLOR) px = 0xFFFF;
+
+            rowPtr[x * 2] = px & 0xFF;
+            rowPtr[x * 2 + 1] = px >> 8;
         }
     }
 
     String result = base64::encode(bmpData, fileSize);
+    result.replace("\n", "");
+
     delete[] bmpData;
 
     return result;
 }
+
 
 //
 // NTP-Zeitsynchronisation um 02:00:05 und 03:00:05
@@ -733,6 +804,17 @@ void setup() {
     Serial.begin(115200);
     delay(500);
 
+
+#if defined GC9A01 || defined GC9A01_WITH_BACKLIGHT
+    tft_type = "GC9A01";
+#elif defined GC9D01    
+    tft_type = "GC9D01";    
+#else   
+    tft_type = "ILI9341";   
+#endif
+
+
+
     preferences.begin("clock", false);
 
 
@@ -745,7 +827,7 @@ void setup() {
         psramAvailable = false;
         Serial.println("[INFO] Kein PSRAM gefunden, Hardware-Rotation wird verwendet.");
 #ifdef GC9D01
-        preferences.putUChar("storientation", 0); 
+        preferences.putUChar("tft_rotation", 0); 
 #endif
     }
 #ifndef GC9D01 // wird nur bei Display GC9D01 benötigt
@@ -753,10 +835,10 @@ void setup() {
 #endif
  
 
-    if (preferences.getBool("firstStart", true)) {
+    if (preferences.getInt("firstStart", 0) != 42) {
         Serial.println("[Preferences] First start detected, initializing...");
 
-        preferences.putBool("firstStart", false);
+        preferences.putInt("firstStart", 42);
 
         preferences.putString("ssid", "");
         preferences.putString("pass", "");
@@ -768,12 +850,12 @@ void setup() {
 
         preferences.putString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3");
 
-        preferences.putUChar("storientation", 0);
+        preferences.putUChar("tft_rotation", 0);
         preferences.putString("handset", "default");
-        preferences.putString("background", "/faces/default");
+        preferences.putString("background", "/face_default.bmp");
 
-        preferences.putBool("bahnhof", true);   
-        preferences.putBool("secondhand", true);   
+        preferences.putBool("stationMode", true);   
+        preferences.putBool("showSecondHand", true);   
         preferences.putBool("smoothMinute", false);
 
 #ifdef GC9D01
@@ -787,13 +869,15 @@ void setup() {
         preferences.putInt("highThreshold", 60);
 
         preferences.putUInt("centerColor", TFT_RED);   
-#ifdef GC9A01
-        preferences.putUInt("centerSize", 6);
-#else
-        preferences.putUInt("centerSize", 3);
-#endif
-       
-         
+
+        if (tft_type == "GC9A01" || tft_type == "ILI9341") {
+            preferences.putUInt("centerSize", 6);
+        }
+        if (tft_type == "GC9D01") {
+            preferences.putUInt("centerSize", 3);
+        }        
+       preferences.end();
+       preferences.begin("clock", false);         
     }
      
     ntpServer1 = preferences.getString("ntpServer1", "pool.ntp.org");
@@ -805,8 +889,9 @@ void setup() {
     Serial.println("[NTP] Aktuelle NTP-Server: " + ntpServer1 + " / " + ntpServer2);
     Serial.println("Zeitzone eingestellt auf: " + timezone);
 
-    bahnhofMode = preferences.getBool("bahnhof", true);
+    stationMode = preferences.getBool("stationMode", true);
     smoothMinute = preferences.getBool("smoothMinute", false);
+    showSecondHand = preferences.getBool("showSecondHand", true);
 
     lowThreshold = preferences.getInt("lowThreshold", 40);
     highThreshold = preferences.getInt("highThreshold", 60);    
@@ -886,20 +971,21 @@ void setup() {
    
     tft.fillScreen(TFT_BLACK);
 
-    tft_rotation = preferences.getUChar("storientation", 0);
+    tft_rotation = preferences.getUChar("tft_rotation", 0);
+
+    selectedBackground = preferences.getString("background", "/face_default.bmp");
+    Serial.println("selected background: " + selectedBackground);
 
 #ifndef GC9D01
     tft.setRotation(tft_rotation);
 #else
     if (!psramAvailable) {
         tft_rotation = 0;
-        preferences.putUChar("storientation", tft_rotation);
+        preferences.putUChar("tft_rotation", tft_rotation);
         tft.setRotation(tft_rotation);
         Serial.printf("[TFT] Using stored rotation: %d\n", tft_rotation);
     }
 #endif
-
-    
 
 
 #ifdef TFT_Backlight
@@ -931,21 +1017,18 @@ void setup() {
     loadClockFace();
     loadHandSprites();
 
-    showSecondHand = preferences.getBool("secondhand", true);
-      
-
     wifi_ssid = preferences.getString("ssid", "");
     wifi_pass = preferences.getString("pass", "");
     wifi_ssid2 = preferences.getString("ssid2", "");
     wifi_pass2 = preferences.getString("pass2", "");
          
-    selectedBackground = preferences.getString("background", "/faces/default");
+   
+    if (digitalRead(BUTTON1) == HIGH) startAP();
+    
 
-    bool apMode = digitalRead(BUTTON1) == HIGH;
-    if (!apMode) apMode = !connectWiFi(true);
-    if (apMode) startAP();
-
-    if (!apMode) setupNTP();
+    connectWiFi(true);
+    if (WiFi.getMode() != WIFI_STA) startAP();
+    setupNTP();
     setupWebServer();
     server.begin();
 
@@ -963,7 +1046,7 @@ void startAP() {
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
     tft.setTextSize(TFT_TEXT_SIZE);
     tft.setCursor(20, (CLOCK_HEIGHT / 2) - (CLOCK_HEIGHT / 8)) ;
-    tft.println("AP active");
+    tft.println("AccessPoint active");
     tft.setCursor(20, (CLOCK_HEIGHT / 2));
     tft.println("clock123 clock123");
     tft.setCursor(20, (CLOCK_HEIGHT / 2 ) + (CLOCK_HEIGHT / 8));
@@ -1113,6 +1196,46 @@ void setTimezone(String tz) {
 
 void setupWebServer() {
 
+    // http://192.168.0.128/api/setface?file=face_bigben.bmp
+
+    server.on("/api/setface", HTTP_GET, []() {
+        if (server.hasArg("file")) {
+            String file = server.arg("file");
+            file.replace("..", "");
+            if (!file.startsWith("/")) file = "/" + file;
+            if (file == "/face_default.bmp" || LittleFS.exists(file)) {
+                preferences.putString("background", file);
+                selectedBackground = file;
+                loadClockFace();
+                loadHandSprites();
+                updateClock();
+                server.send(200, "application/json", "{\"status\":\"ok\",\"face\":\"" + file + "\"}");
+                return;
+            }
+            server.send(404, "application/json", "{\"status\":\"error\",\"msg\":\"File not found\"}");
+        }
+        else {
+            server.send(400, "application/json", "{\"status\":\"error\",\"msg\":\"Missing file parameter\"}");
+        }
+        });
+
+    // http://192.168.0.128/api/sethandset?set=3
+
+    server.on("/api/sethandset", HTTP_GET, []() {
+        if (server.hasArg("set")) {
+            String set = server.arg("set");
+            Serial.println("[HANDSET] Set to: " + set);
+            preferences.putString("handset", set);
+            loadClockFace();
+            loadHandSprites();
+            updateClock();
+            server.send(200, "application/json", "{\"status\":\"ok\",\"handset\":\"" + set + "\"}");
+        }
+        else {
+            server.send(400, "application/json", "{\"status\":\"error\",\"msg\":\"Missing set parameter\"}");
+        }
+        });
+
     // Webserver konfigurieren
     server.on("/set_timezone", HTTP_POST, []() {
         if (server.hasArg("ntpServer1")) {
@@ -1121,7 +1244,7 @@ void setupWebServer() {
             preferences.putString("ntpServer1", ntpServer1);
             preferences.putString("ntpServer2", ntpServer2);
             Serial.println("[NTP] NTP Server1 set to: " + ntpServer1);    
-            Serial.println("[NTP] NTP Server2 set to: " + ntpServer1);
+            Serial.println("[NTP] NTP Server2 set to: " + ntpServer2);
             setupNTP();
         }
 
@@ -1289,18 +1412,19 @@ void setupWebServer() {
 
     server.on("/applydisplaysettings", HTTP_POST, []() {
         // Save to Preferences
-        bahnhofMode = server.hasArg("enableBahnhof");
-        showSecondHand = server.hasArg("showSecond");        
+
+        stationMode = server.hasArg("stationMode");
+        showSecondHand = server.hasArg("showSecondHand");        
         smoothMinute = server.hasArg("smoothMinute");
 
-        preferences.putBool("bahnhof", bahnhofMode);
-        preferences.putBool("secondhand", showSecondHand);
+        preferences.putBool("stationMode", stationMode);
+        preferences.putBool("showSecondHand", showSecondHand);
         preferences.putBool("smoothMinute", smoothMinute);
 
         if (server.hasArg("rotation")) {
             tft_rotation = server.arg("rotation").toInt();  
             if (tft_rotation >= 0 && tft_rotation <= 3) {
-                preferences.putUChar("storientation", tft_rotation);
+                preferences.putUChar("tft_rotation", tft_rotation);
                 firstRun = true;
                 if (!psramAvailable) {
                     tft.setRotation(tft_rotation); // sofort anwenden
@@ -1468,17 +1592,9 @@ void setupWebServer() {
         
         html += "<li>Compiled on: <strong>" + (String)version + "</strong></li><br>";
 
-#ifdef GC9A01
-        html += "<li>TFT Driver: GC9A01</li>";
-#elif defined(GC9D01)
-        html += "<li>TFT Driver: GC9D01</li>";
-#elif defined(ILI9341)
-        html += "<li>TFT Driver: ILI9341</li>";
-#else 
-        html += "<li>TFT Driver: unknown</li>";
-#endif
-        html += "<li>TFT Size: " + String(TFT_WIDTH) + " x " + String(TFT_HEIGHT) + "</li>";
-       
+        html += "<li>TFT Driver: " + tft_type + "</li>";
+
+        html += "<li>TFT Size: " + String(TFT_WIDTH) + " x " + String(TFT_HEIGHT) + "</li>";       
 
         html += "<br>";
         html += "<li>ChipModel: " + String(ESP.getChipModel()) + "</li>";
@@ -1491,7 +1607,7 @@ void setupWebServer() {
         html += "<li>IP Address: " + WiFi.localIP().toString() + "</li>";
         html += "<li>MAC Address: " + WiFi.macAddress() + "</li>";
         html += "<li>WiFi SSID: " + String(WiFi.SSID()) + "</li>";
-        html += "<li>WiFi Mode: " + String(WiFi.getMode() == WIFI_AP ? "AP" : (WiFi.getMode() == WIFI_STA ? "STA" : "AP_STA")) + "</li>";  
+        html += "<li>WiFi Mode: " + String(WiFi.getMode() == WIFI_AP ? "WIFI_AP" : (WiFi.getMode() == WIFI_STA ? "WIFI_STA" : "AP_STA")) + "</li>";  
         html += "<li>WiFi Channel: " + String(WiFi.channel()) + "</li>";
         html += "<li>Signal Strength (RSSI): " + String(WiFi.RSSI()) + " dBm</li><br>";   
 
@@ -1552,18 +1668,19 @@ void setupWebServer() {
         html += "<h3>Actual Preferences</h3><ul>";
         html += "<li><b>ssid</b>: " + preferences.getString("ssid", "") + "</li>";
         html += "<li><b>ssid2</b>: " + preferences.getString("ssid2", "") + "</li>";
-        html += "<li><b>ntpServer</b>: " + preferences.getString("ntpServer", "pool.ntp.org") + "</li>";
+        html += "<li><b>ntpServer1</b>: " + preferences.getString("ntpServer1", "pool.ntp.org") + "</li>";
+        html += "<li><b>ntpServer2</b>: " + preferences.getString("ntpServer2", "time.nist.gov") + "</li>";   
         html += "<li><b>timezone</b>: " + preferences.getString("timezone", "CET-1CEST,M3.5.0,M10.5.0/3") + "</li>";
         html += "<li><b>background</b>: " + preferences.getString("background", "/faces/default") + "</li>";
         html += "<li><b>handset</b>: " + preferences.getString("handset", "") + "</li>";
         html += "<li><b>centerColor (RGB565)</b>: " + String(preferences.getUInt("centerColor", TFT_RED), HEX) + "</li>";
         html += "<li><b>centerSize</b>: " + String(preferences.getUInt("centerSize", 6)) + "</li>";
-        html += "<li><b>storientation</b>: " + String(preferences.getUChar("storientation", 0)) + "</li>";
+        html += "<li><b>tft_rotation</b>: " + String(preferences.getUChar("tft_rotation", 0)) + "</li>";
 
         // Booleans als Text
         html += "<li><b>use_adc</b>: " + String(preferences.getBool("use_adc", true) ? "true" : "false") + "</li>";
-        html += "<li><b>bahnhof</b>: " + String(preferences.getBool("bahnhof", true) ? "true" : "false") + "</li>";
-        html += "<li><b>secondhand</b>: " + String(preferences.getBool("secondhand", true) ? "true" : "false") + "</li>";
+        html += "<li><b>stationMode</b>: " + String(preferences.getBool("stationMode", true) ? "true" : "false") + "</li>";
+        html += "<li><b>secondhand</b>: " + String(preferences.getBool("showSecondHand", true) ? "true" : "false") + "</li>";
         html += "<li><b>smoothMinute</b>: " + String(preferences.getBool("smoothMinute", false) ? "true" : "false") + "</li>";
         
         html += "<li><b>minBrightness</b>: " + String(preferences.getUChar("minBrightness", 100)) + "</li>";
@@ -1659,7 +1776,7 @@ void setupWebServer() {
             file = root.openNextFile();
         }
 
-        if (!anyFile) html += "<tr><td colspan='3'>No BMP files found in /faces.</td></tr>";
+        if (!anyFile) html += "<tr><td colspan='3'>No BMP files found in /</td></tr>";
         html += "</table><hr>";
 
         html += "<h3>Upload New Clock Face</h3>";
@@ -1692,74 +1809,82 @@ void setupWebServer() {
 
 
         html += "<input name='pass' id='pass' placeholder='Password' type='password' value=''><br>";
-        html += "<small>Password is hidden. Leave empty to keep current.</small><br><br>";
+        if (WiFi.getMode() == WIFI_STA) {
+            html += "<small>Password is hidden. Leave empty to keep current.</small>";
+        }   
+        html += "<br>";
 
 
         html += "<h3>Alternative WiFi</h3>";
         html += "<input name='ssid2' placeholder='SSID 2' value='" + wifi_ssid2 + "'><br>";
         html += "<input name='pass2' placeholder='Password 2' type='password' value=''><br>";
-        html += "<small>Password is hidden. Leave empty to keep current.</small><br>";
+        if (WiFi.getMode() == WIFI_STA) {
+            html += "<small>Password is hidden. Leave empty to keep current.</small>";
+        }
 
         html += "<br>";
 
 
         html += "<button type='submit'>Save</button></form><hr>";
 
+        if (WiFi.getMode() == WIFI_STA) {
 
 
-        html += "<form action='/applydisplaysettings' method='POST'>";
+            html += "<form action='/applydisplaysettings' method='POST'>";
 
 
-        //html += "<a href='/timezone_form'><button>Set Timezone</button></a><br><br>";
+            //html += "<a href='/timezone_form'><button>Set Timezone</button></a><br><br>";
 
-        html += "<li><a href='/timezone_form'>Set Timezone</a></li>";
-
-
-
-        html += "<table style='margin:auto;text-align:left;'><tr>";
-
-        html += "<td><input type='checkbox' name='enableBahnhof' value='1' ";
-        html += preferences.getBool("bahnhof", true) ? "checked" : "";
-        html += "> Train Station Mode</td>";
-
-        html += "<td><input type='checkbox' name='showSecond' value='1' ";
-        html += preferences.getBool("secondhand", true) ? "checked" : "";
-        html += "> Show Seconds</td>";
-
-        html += "<td><input type='checkbox' name='smoothMinute' value='1' ";
-        html += preferences.getBool("smoothMinute", true) ? "checked" : "";
-        html += "> Smooth Minute Hand</td>";
+            html += "<li><a href='/timezone_form'>Set Timezone</a></li>";
 
 
-        
-        tft_rotation = preferences.getUChar("storientation", 0);
-        html += "<td>Rotation: <select name='rotation'>";
-        for (int i = 0; i <= 3; i++) {
-            html += "<option value='" + String(i) + "'";
-            if (i == tft_rotation) html += " selected";
-            html += ">" + String(i) + "</option>";
+
+            html += "<table style='margin:auto;text-align:left;'><tr>";
+
+            html += "<td><input type='checkbox' name='stationMode' value='1' ";
+            html += preferences.getBool("stationMode", true) ? "checked" : "";
+            html += "> Train Station Mode</td>";
+
+            html += "<td><input type='checkbox' name='showSecondHand' value='1' ";
+            html += preferences.getBool("showSecondHand", true) ? "checked" : "";
+            html += "> Show Seconds</td>";
+
+            html += "<td><input type='checkbox' name='smoothMinute' value='1' ";
+            html += preferences.getBool("smoothMinute", true) ? "checked" : "";
+            html += "> Smooth Minute Hand</td>";
+
+
+
+            tft_rotation = preferences.getUChar("tft_rotation", 0);
+            html += "<td>Rotation: <select name='rotation'>";
+            for (int i = 0; i <= 3; i++) {
+                html += "<option value='" + String(i) + "'";
+                if (i == tft_rotation) html += " selected";
+                html += ">" + String(i) + "</option>";
+            }
+            html += "</select></td>";
+
+
+
+            html += "<td valign=bottom><button type='submit'>Apply</button></td>";
+            html += "</tr></table></form>";
+
+
+            html += "<hr>";
+
+
+            html += "<a href='/listfilesFaces'><button>Manage Clock Face Files</button></a><br><br>";
+            html += "<a href='/handsets'><button>Manage Hand Sets</button></a><br><br>";
+
+            html += "<form action='/syncnow' method='POST'><button type='submit'>Sync Time Now</button></form><br>";
+            html += "<form action='/brightness' method='POST'><button type='submit'>Brightness Settings</button></form><br>";
+            
+            html += "<a href='/files'>File Manager</a><br>"; 
         }
-        html += "</select></td>";
-       
 
-
-        html += "<td valign=bottom><button type='submit'>Apply</button></td>";
-        html += "</tr></table></form>";
-
-
-        html += "<hr>";
-
-
-        html += "<a href='/listfilesFaces'><button>Manage Clock Face Files</button></a><br><br>";
-        html += "<a href='/handsets'><button>Manage Hand Sets</button></a><br><br>";
-
-        html += "<form action='/syncnow' method='POST'><button type='submit'>Sync Time Now</button></form><br>";
-        html += "<form action='/brightness' method='POST'><button type='submit'>Brightness Settings</button></form><br>";
         html += "<a href='/status'>Systemstatus</a><br>";
-        html += "<a href='/files'>File Manager</a><br>";
-
         html += "<br><a href='/reboot'>Reboot</a><br>";
-        
+        html += "<br><a href='/factoryReset' onclick = \"return confirm('Really ?')\">Factory Reset</a><br>";
         html += "</body></html>";
         server.send(200, "text/html", html);
         });
@@ -1772,17 +1897,25 @@ void setupWebServer() {
             if (server.arg("pass") != "") preferences.putString("pass", server.arg("pass"));
             if (server.arg("pass2") != "") preferences.putString("pass2", server.arg("pass2"));
 
-            preferences.putBool("secondhand", server.hasArg("show"));
-            preferences.putBool("bahnhof", server.hasArg("enableBahnhof"));    
+             
+            //preferences.putBool("showSecondHand", server.hasArg("show"));
+            //preferences.putBool("stationMode", server.hasArg("stationMode"));    
 
-            server.send(200, "text/html", "<!DOCTYPE html><html><head><meta http-equiv='refresh' content='10; url=/'><title>Rebooting</title></head><body style='font-family:Arial;text-align:center;'><h2>Rebooting...</h2><p>Returning to main page in 10 seconds.</p></body></html>");
-            delay(1000);
-            ESP.restart();
+            if (WiFi.getMode() == WIFI_STA) {
+                server.send(200, "text/html", "<!DOCTYPE html><html><head><meta http-equiv='refresh' content='10; url=/'>"
+                    "<title>Settings saved</title></head><body style='font-family:Arial;text-align:center;'>"
+                    "<h2>Settings saved</h2><p>Return to the main page in 10 seconds or refresh the website when the ESP is online again.</p></body></html>");
+            } else {
+                server.send(200, "text/html", "<!DOCTYPE html><html><head>"
+                    "<title>Settings saved</title></head><body style='font-family:Arial;text-align:center;'>"
+                    "<h2>Settings saved</h2><p>Please connect to your home network and go to the ESP website at http:// IPADDRESS</p></body></html>");
+            }
+            esp_reboot();
         }
         });
 
     server.on("/upload", HTTP_GET, []() {
-        server.send(200, "text/html", "<form method='POST' action='/upload' enctype='multipart/form-data' onsubmit='showProgress()'><input type='file' name='upload' accept='.bmp'><br><br><button type='submit'>Upload BMP</button><div id='progress' style='display:none;'>Uploading... please wait ⏳</div><script>function showProgress(){document.getElementById('progress').style.display='block';}</script></form><br><a href='/listfilesFaces'>Back to file list</a>");
+        server.send(200, "text/html", "<form method='POST' action='/upload' enctype='multipart/form-data' onsubmit='showProgress()'><input type='file' name='upload' accept='.bmp'><br><br><button type='submit'>Upload BMP</button><div id='progress' style='display:none;'>Uploading... please wait</div><script>function showProgress(){document.getElementById('progress').style.display='block';}</script></form><br><a href='/listfilesFaces'>Back to file list</a>");
         });
 
     server.on("/upload", HTTP_POST, []() {
@@ -1818,6 +1951,7 @@ void setupWebServer() {
             if (LittleFS.exists(file)) {
                 selectedBackground = file;
                 preferences.putString("background", file);
+                Serial.println("set bg to: " + file);
                 loadClockFace();
                 loadHandSprites();
                 server.sendHeader("Location", "/listfilesFaces", true);
@@ -1890,25 +2024,42 @@ void setupWebServer() {
             html += "<tr><td colspan='3'>No hand sets found.</td></tr>";
         }
 
+
+        String handHourBase64 = encodeBmpToBase64(handHour, HAND_WIDTH, HAND_HEIGHT);
+        String handMinuteBase64 = encodeBmpToBase64(handMinute, HAND_WIDTH, HAND_HEIGHT);
+        String handSecondBase64 = encodeBmpToBase64(handSecond, HAND_WIDTH, HAND_HEIGHT);
+        
+
+
         // Always show default as built-in
         html += "<tr><td>default (built-in)</td><td>";
-        html += "<img src='data:image/bmp;base64," + encodeBmpToBase64(handHour, HAND_WIDTH, HAND_HEIGHT) + "'> ";
-        html += "<img src='data:image/bmp;base64," + encodeBmpToBase64(handMinute, HAND_WIDTH, HAND_HEIGHT) + "'> ";
-        html += "<img src='data:image/bmp;base64," + encodeBmpToBase64(handSecond, HAND_WIDTH, HAND_HEIGHT) + "'>";
-        html += "</td><td><a href='/sethandset?set=default'</a>Set</td></tr>";
+        html += "<img src='data:image/bmp;charset=utf-8;base64, " + handHourBase64 + "'> ";
+        html += "<img src='data:image/bmp;charset=utf-8;base64, " + handMinuteBase64 + "'> ";
+        html += "<img src='data:image/bmp;charset=utf-8;base64, " + handSecondBase64 + "'> ";
+        html += "</td>";
+        //html += "<td> </td>";
+        html += "<td><a href = '/sethandset?set=default'>Set</a></td> ";
+        html += "</tr>";
 
+        
         for (const String& set : foundSets) {
             html += "<tr><td>" + set + (set == activeSet ? " (active)" : "") + "</td><td>";
             String hourPath = "/hand_set" + set + "_hour.bmp";
             String minutePath = "/hand_set" + set + "_minute.bmp";
             String secondPath = "/hand_set" + set + "_second.bmp";
-            html += LittleFS.exists(hourPath) ? "<img src='/file?name=" + hourPath + "'> " : "<img src='data:image/bmp;base64," + encodeBmpToBase64(handHour, HAND_WIDTH, HAND_HEIGHT) + "'> ";
-            html += LittleFS.exists(minutePath) ? "<img src='/file?name=" + minutePath + "'> " : "<img src='data:image/bmp;base64," + encodeBmpToBase64(handMinute, HAND_WIDTH, HAND_HEIGHT) + "'> ";
-            html += LittleFS.exists(secondPath) ? "<img src='/file?name=" + secondPath + "'>" : "<img src='data:image/bmp;base64," + encodeBmpToBase64(handSecond, HAND_WIDTH, HAND_HEIGHT) + "'>";
+            html += LittleFS.exists(hourPath) ? "<img src='/file?name=" + hourPath + "'> " : "<img src='data:image/bmp;charset=utf-8;base64, " + handHourBase64 + "'> ";
+            html += LittleFS.exists(minutePath) ? "<img src='/file?name=" + minutePath + "'> " : "<img src='data:image/bmp;charset=utf-8;base64, " + handMinuteBase64 + "'> ";
+           
+             
+            html += LittleFS.exists(secondPath) ? "<img src='/file?name=" + secondPath + "'> " : "<img src='data:image/bmp;charset=utf-8;base64," + handSecondBase64 + "'> ";
+                
 
-            html += "</td><td><a href='/sethandset?set=" + set + "'>Set</a> | <a href='/deletehandset?set=" + set + "' onclick=\"return confirm('Delete this hand set?')\">Delete</a></td></tr>";
+            html += "</td>";
+         //   html += "<td> </td>";
+            html += "<td><a href = '/sethandset?set=" + set + "'>Set</a> | <a href = '/deletehandset?set=" + set + "' onclick = \"return confirm('Delete this hand set?')\">Delete</a></td>";
+            html +="</tr>";
         }
-
+        
         html += "</table><hr>";
                
         uint8_t centerSize = preferences.getUInt("centerSize", 6);
@@ -1929,6 +2080,7 @@ void setupWebServer() {
         html += "<a href='/status'>Systemstatus</a><br>";
         html += "<a href='/files'>File Manager</a><br>";
         html += "</body></html>";
+        //Serial.println(html);
         server.send(200, "text/html", html);
         });
 
@@ -2017,10 +2169,15 @@ void setupWebServer() {
         });
 
     server.on("/reboot", HTTP_GET, []() {
-        server.send(200, "text/html", "<!DOCTYPE html><html><head><meta http-equiv='refresh' content='10; url=/'><title>Rebooting</title></head><body style='font-family:Arial;text-align:center;'><h2>Rebooting...</h2><p>Returning to main page in 10 seconds.</p></body></html>");
-        delay(1000);
-        ESP.restart();
-        });    
+        server.send(200, "text/html", "<!DOCTYPE html><html><head><meta http-equiv='refresh' content='10; url=/'><title>Rebooting</title></head><body style='font-family:Arial;text-align:center;'><h2>Rebooting...</h2><p>Return to the main page in 10 seconds or refresh the website when the ESP is online again.</p></body></html>");        
+        esp_reboot();
+        }); 
+
+    server.on("/factoryReset", HTTP_GET, []() {
+          factoryReset();
+        });
+
+
 
     server.on("/syncnow", HTTP_POST, []() {
         setupNTP();
@@ -2193,7 +2350,7 @@ bool loadBmpToSprite_PS_RAM(TFT_eSprite* sprite, const char* filename) {
         return false;
     }
 
-    tft_rotation = preferences.getUChar("storientation", 0);
+    tft_rotation = preferences.getUChar("tft_rotation", 0);
 
     // 4. Pixelrotation (Korrektur der Spiegelung und Drehung)
     for (int y = 0; y < height; y++) {
@@ -2400,4 +2557,62 @@ bool scaleAndSaveBmp(const char* sourcePath, const char* targetPath, int outW, i
     out.close();
     delete[] outImage;
     return true;
+}
+
+void eraseWiFiConfig() {
+    // WLAN trennen und komplett deaktivieren
+    WiFi.disconnect(true, true);  // true,true => auch gespeicherte Daten löschen
+    WiFi.mode(WIFI_OFF);
+    delay(1000);
+
+    // Zusätzlich: Manuell NVS-Einträge für WiFi löschen
+    nvs_handle_t nvsHandle;
+    esp_err_t err = nvs_open("wifi", NVS_READWRITE, &nvsHandle);
+    if (err == ESP_OK) {
+        nvs_erase_all(nvsHandle);
+        nvs_commit(nvsHandle);
+        nvs_close(nvsHandle);
+        Serial.println("WiFi-NVS-Einträge gelöscht.");
+    }
+    else {
+        Serial.printf("Fehler beim Öffnen des NVS-WiFi-Handles: %s\n", esp_err_to_name(err));
+    }
+}
+
+void eraseAllNVS() {
+    // Löscht gesamten NVS-Speicher
+    esp_err_t result = nvs_flash_erase();
+    if (result == ESP_OK) {
+        Serial.println("Kompletter NVS-Speicher gelöscht (inkl. WiFi, Preferences).");
+        nvs_flash_init();  // Wichtig: Danach wieder initialisieren!
+    }
+    else {
+        Serial.printf("NVS-Erase fehlgeschlagen: %s\n", esp_err_to_name(result));
+    }
+}
+
+void factoryReset() {
+    tft.fillScreen(TFT_BLACK);
+    preferences.begin("clock", false);
+    preferences.putInt("firstStart", 0);
+    preferences.end();
+    delay(100);
+    Serial.println(">>> Factory Reset gestartet...");
+    eraseWiFiConfig();
+    eraseAllNVS();
+    delay(2000);
+    Serial.println(">>> Neustart...");
+         
+}
+
+void esp_reboot() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setTextSize(TFT_TEXT_SIZE);
+    tft.setCursor(20, (CLOCK_HEIGHT / 2));
+    tft.println("Rebooting...");
+    delay(900);
+    tft.fillScreen(TFT_BLACK);
+    delay(100);
+    ESP.restart();
 }
